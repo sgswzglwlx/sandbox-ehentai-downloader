@@ -1,0 +1,106 @@
+name: E-Hentai 漫画下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      gallery_urls:
+        description: '画廊URL（多个用逗号分隔，如 https://e-hentai.org/g/1234567/abcdef/）'
+        required: true
+        type: string
+      cookies:
+        description: 'Cookie字符串（可选，格式: ipb_member_id=xxx; ipb_pass_hash=xxx; igneous=xxx），用于ExHentai/原图'
+        required: false
+        type: string
+      output_format:
+        description: '输出格式'
+        required: true
+        default: 'zip'
+        type: choice
+        options:
+          - zip
+          - images
+
+env:
+  DL_DIR: ${{ github.workspace }}/downloads
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装 gallery-dl
+        run: |
+          pip install -q gallery-dl
+          gallery-dl --version
+
+      - name: 生成 cookies.txt
+        if: ${{ github.event.inputs.cookies != '' }}
+        run: |
+          python3 << 'PYEOF'
+          import os
+          cookie_str = os.environ.get('COOKIE_STR', '')
+          # 解析 "name1=value1; name2=value2" 格式
+          pairs = [p.strip() for p in cookie_str.split(';') if '=' in p]
+          lines = ["# Netscape HTTP Cookie File"]
+          for p in pairs:
+              name, _, value = p.partition('=')
+              # domain, includeSubdomains, path, secure, expiry, name, value
+              lines.append(f".e-hentai.org\tTRUE\t/\tTRUE\t0\t{name.strip()}\t{value.strip()}")
+              lines.append(f".exhentai.org\tTRUE\t/\tTRUE\t0\t{name.strip()}\t{value.strip()}")
+          with open('cookies.txt', 'w') as f:
+              f.write("\n".join(lines))
+          print(f"cookies.txt 已生成: {len(pairs)} 个cookie")
+          PYEOF
+        env:
+          COOKIE_STR: ${{ github.event.inputs.cookies }}
+
+      - name: 下载漫画
+        env:
+          URLS: ${{ github.event.inputs.gallery_urls }}
+          HAS_COOKIES: ${{ github.event.inputs.cookies }}
+        run: |
+          mkdir -p "$DL_DIR"
+          cd "$DL_DIR"
+          urls=$(echo "$URLS" | tr ',' '\n')
+          for url in $urls; do
+            echo "=== 下载: $url ==="
+            if [ "$HAS_COOKIES" != "" ]; then
+              gallery-dl --cookies "$GITHUB_WORKSPACE/cookies.txt" \
+                --directory "$DL_DIR" "$url" 2>&1 | tail -20
+            else
+              gallery-dl --directory "$DL_DIR" "$url" 2>&1 | tail -20
+            fi
+          done
+          echo "=== 下载完成，文件列表 ==="
+          find "$DL_DIR" -type f | head -30
+
+      - name: 打包 ZIP
+        if: ${{ github.event.inputs.output_format == 'zip' }}
+        run: |
+          cd "$DL_DIR"
+          # 找到下载的图片目录，打包
+          find . -type d -name "gallery" -o -type d -name "*[0-9]*" | head -5
+          # gallery-dl 默认输出结构: DL_DIR/站点/分类/标题/图片
+          for d in */; do
+            echo "打包目录: $d"
+            zip -r -0 "$DL_DIR/../$(basename "$d" | sed 's/[/ ]/_/g').zip" "$d" 2>&1 | tail -3
+          done
+          cd "$DL_DIR/.."
+          ls -lh *.zip 2>/dev/null || echo "未生成zip"
+
+      - name: 上传下载文件
+        uses: actions/upload-artifact@v4
+        with:
+          name: ehentai-downloads
+          path: |
+            downloads/
+            *.zip
+          compression-level: 0
+          retention-days: 7
