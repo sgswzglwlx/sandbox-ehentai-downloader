@@ -1,0 +1,20 @@
+name: 连通性测试
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 测试 E 站连通性
+        run: |
+          echo "=== 测试 e-hentai.org ==="
+          curl -s -o /dev/null -w "HTTP %{http_code} | %{time_total}s\n" --connect-timeout 10 --max-time 20 "https://e-hentai.org/" || echo "失败"
+          echo "=== 测试 exhentai.org ==="
+          curl -s -o /dev/null -w "HTTP %{http_code} | %{time_total}s\n" --connect-timeout 10 --max-time 20 "https://exhentai.org/" || echo "失败"
+          echo "=== 测试 hath.network ==="
+          curl -s -o /dev/null -w "HTTP %{http_code} | %{time_total}s\n" --connect-timeout 10 --max-time 20 "https://hath.network/" || echo "失败"
+          echo "=== 测试 gallery-dl 安装 ==="
+          pip install -q gallery-dl 2>&1 | tail -1
+          gallery-dl --version
