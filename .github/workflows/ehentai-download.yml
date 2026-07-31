@@ -188,25 +188,6 @@ jobs:
               title = safe_name(title_el.get_text(strip=True)) if title_el else f'gallery_{int(time.time())}'
               print(f'标题: {title}')
 
-              # 调试：保存画廊页 HTML
-              with open('gallery_debug.html', 'w', encoding='utf-8') as f:
-                  f.write(resp.text)
-              # 打印所有含 pages 的文本
-              for el in soup.find_all(string=lambda t: t and 'page' in t.lower()):
-                  parent = el.parent
-                  if parent and parent.name in ('div', 'span', 'td', 'a'):
-                      print(f'PAGES-EL: <{parent.name} class="{parent.get("class", "")}"> {parent.get_text(strip=True)[:80]}')
-                      if parent.has_attr('data-limit'):
-                          print(f'  data-limit={parent["data-limit"]}')
-              # 打印分页导航
-              nav = soup.select_one('.ptt')
-              if nav:
-                  print('PTT-NAV:', nav.get_text(' ', strip=True)[:200])
-              else:
-                  print('NO PTT NAV')
-              for a in soup.select('a[href*="?p="], a[href*="&p="]')[:10]:
-                  print(f'PAGELINK: {a.get_text(strip=True)[:30]} -> {a.get("href", "")[:80]}')
-
               # 2. 提取每页详情页链接（处理列表分页，每页20个）
               page_links = []
               def collect_links(bs):
@@ -227,23 +208,31 @@ jobs:
               page_links = collect_links(soup)
               print(f'第0页找到 {len(page_links)} 个链接')
 
-              # 判断总页数（列表分页数，每页20图）
+              # 判断总列表页数（每页20图）
               total_list_pages = 1
-              # 方式1: gpc data-limit 属性（图片总数）
-              gpc = soup.select_one('.gpc')
-              if gpc and gpc.has_attr('data-limit'):
-                  total_images = int(gpc['data-limit'])
-                  total_list_pages = (total_images + 19) // 20
-                  print(f'总图片数: {total_images}, 列表页数: {total_list_pages}')
-              # 方式2: 从分页导航找 Last 链接的页码
+              # 方式1: 从 .ptt 分页导航里找最大页码
+              import urllib.parse as up
+              for a in soup.select('.ptt a[href*="p="]'):
+                  qs = up.parse_qs(up.urlparse(a['href']).query)
+                  for v in qs.get('p', []):
+                      try:
+                          p = int(v)
+                          if p + 1 > total_list_pages:
+                              total_list_pages = p + 1
+                      except ValueError:
+                          pass
+              if total_list_pages > 1:
+                  print(f'从 .ptt 导航推断列表页数: {total_list_pages}')
+              # 方式2: 从 gdt2 里的 "N pages" 文本
               if total_list_pages == 1:
-                  last_a = soup.select_one('a#dlast')
-                  if last_a:
-                      import urllib.parse as up
-                      qs = up.parse_qs(up.urlparse(last_a['href']).query)
-                      if 'prev' in qs:
-                          total_list_pages = int(qs['prev'][0])
-                          print(f'从导航推断列表页数: {total_list_pages}')
+                  gdt2 = soup.select_one('.gdt2')
+                  if gdt2:
+                      import re as _re
+                      m = _re.search(r'(\d+)\s+pages?', gdt2.get_text())
+                      if m:
+                          total_images = int(m.group(1))
+                          total_list_pages = (total_images + 19) // 20
+                          print(f'从 gdt2 解析: {total_images} 张图, {total_list_pages} 个列表页')
 
               # 抓取后续列表页
               for p in range(1, total_list_pages):
