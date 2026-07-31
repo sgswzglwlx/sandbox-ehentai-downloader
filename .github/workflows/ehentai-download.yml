@@ -188,20 +188,61 @@ jobs:
               title = safe_name(title_el.get_text(strip=True)) if title_el else f'gallery_{int(time.time())}'
               print(f'标题: {title}')
 
-              # 2. 提取每页详情页链接
+              # 2. 提取每页详情页链接（处理列表分页，每页20个）
               page_links = []
-              # 方式1: #gdt 容器里的 .gdtm a
-              for a in soup.select('#gdt .gdtm a, #gdt a'):
-                  href = a.get('href', '')
-                  if '/s/' in href and href not in page_links:
-                      page_links.append(href)
-              # 方式2: 如果没有 #gdt，找所有 /s/ 链接
-              if not page_links:
-                  for a in soup.select('a[href*="/s/"]'):
+              def collect_links(bs):
+                  found = []
+                  # 方式1: #gdt 容器里的 .gdtm a
+                  for a in bs.select('#gdt .gdtm a, #gdt a'):
                       href = a.get('href', '')
-                      if href not in page_links:
-                          page_links.append(href)
-              print(f'找到 {len(page_links)} 个页面链接')
+                      if '/s/' in href and href not in found:
+                          found.append(href)
+                  # 方式2: 如果没有 #gdt，找所有 /s/ 链接
+                  if not found:
+                      for a in bs.select('a[href*="/s/"]'):
+                          href = a.get('href', '')
+                          if href not in found:
+                              found.append(href)
+                  return found
+
+              page_links = collect_links(soup)
+              print(f'第0页找到 {len(page_links)} 个链接')
+
+              # 判断总页数（列表分页数，每页20图）
+              total_list_pages = 1
+              # 方式1: gpc data-limit 属性（图片总数）
+              gpc = soup.select_one('.gpc')
+              if gpc and gpc.has_attr('data-limit'):
+                  total_images = int(gpc['data-limit'])
+                  total_list_pages = (total_images + 19) // 20
+                  print(f'总图片数: {total_images}, 列表页数: {total_list_pages}')
+              # 方式2: 从分页导航找 Last 链接的页码
+              if total_list_pages == 1:
+                  last_a = soup.select_one('a#dlast')
+                  if last_a:
+                      import urllib.parse as up
+                      qs = up.parse_qs(up.urlparse(last_a['href']).query)
+                      if 'prev' in qs:
+                          total_list_pages = int(qs['prev'][0])
+                          print(f'从导航推断列表页数: {total_list_pages}')
+
+              # 抓取后续列表页
+              for p in range(1, total_list_pages):
+                  page_url = gallery_url + ('' if '?' in gallery_url else '?') + f'p={p}'
+                  try:
+                      presp = s.get(page_url, timeout=30)
+                      psoup = BeautifulSoup(presp.text, 'html.parser')
+                      links = collect_links(psoup)
+                      page_links.extend(links)
+                      print(f'第{p}页找到 {len(links)} 个链接 (累计 {len(page_links)})')
+                  except Exception as e:
+                      print(f'第{p}页抓取失败: {e}')
+                  time.sleep(0.5)
+
+              # 去重保序
+              seen = set()
+              page_links = [x for x in page_links if not (x in seen or seen.add(x))]
+              print(f'总共找到 {len(page_links)} 个页面链接')
 
               # 3. 获取图片总数（原图页）
               img_urls = []
