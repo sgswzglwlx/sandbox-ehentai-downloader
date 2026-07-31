@@ -328,6 +328,25 @@ jobs:
           cd "$DL_DIR/.."
           ls -lh *.zip 2>/dev/null || echo "未生成zip"
 
+      - name: 分卷压缩（大文件拆分为10MB分卷）
+        if: ${{ github.event.inputs.mode == 'download' && github.event.inputs.output_format == 'zip' }}
+        run: |
+          cd "$DL_DIR/.."
+          for z in *.zip; do
+            [ -f "$z" ] || continue
+            size=$(stat -c%s "$z")
+            echo "ZIP: $z ($((size/1024/1024))MB)"
+            if [ $size -gt 10485760 ]; then
+              # 超过10MB就分卷
+              split -b 10M -d -a 3 "$z" "${z}.part"
+              rm -f "$z"
+              echo "已分卷: ${z}.part*"
+              ls -lh "${z}".part* | head -10
+            fi
+          done
+          echo "=== 分卷后文件 ==="
+          ls -lh "$DL_DIR/.."/*.part* 2>/dev/null || echo "无需分卷"
+
       - name: 上传下载文件
         uses: actions/upload-artifact@v4
         with:
@@ -335,6 +354,7 @@ jobs:
           path: |
             downloads/
             *.zip
+            *.part*
             search_report.txt
             search_urls.txt
           compression-level: 0
