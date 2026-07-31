@@ -3,9 +3,26 @@ name: E-Hentai 漫画下载
 on:
   workflow_dispatch:
     inputs:
-      gallery_urls:
-        description: '画廊URL（多个用逗号分隔，如 https://e-hentai.org/g/1234567/abcdef/）'
+      mode:
+        description: '模式'
         required: true
+        default: 'download'
+        type: choice
+        options:
+          - download
+          - search
+      gallery_urls:
+        description: '画廊URL（download模式，多个用逗号分隔）'
+        required: false
+        type: string
+      search_keyword:
+        description: '搜索关键词（search模式）'
+        required: false
+        type: string
+      search_page:
+        description: '搜索页码（search模式，默认1）'
+        required: false
+        default: '1'
         type: string
       cookies:
         description: 'Cookie字符串（可选，格式: ipb_member_id=xxx; ipb_pass_hash=xxx; igneous=xxx），用于ExHentai/原图'
@@ -46,12 +63,10 @@ jobs:
           python3 << 'PYEOF'
           import os
           cookie_str = os.environ.get('COOKIE_STR', '')
-          # 解析 "name1=value1; name2=value2" 格式
           pairs = [p.strip() for p in cookie_str.split(';') if '=' in p]
           lines = ["# Netscape HTTP Cookie File"]
           for p in pairs:
               name, _, value = p.partition('=')
-              # domain, includeSubdomains, path, secure, expiry, name, value
               lines.append(f".e-hentai.org\tTRUE\t/\tTRUE\t0\t{name.strip()}\t{value.strip()}")
               lines.append(f".exhentai.org\tTRUE\t/\tTRUE\t0\t{name.strip()}\t{value.strip()}")
           with open('cookies.txt', 'w') as f:
@@ -61,37 +76,57 @@ jobs:
         env:
           COOKIE_STR: ${{ github.event.inputs.cookies }}
 
+      - name: 搜索画廊
+        if: ${{ github.event.inputs.mode == 'search' }}
+        env:
+          KEYWORD: ${{ github.event.inputs.search_keyword }}
+          PAGE: ${{ github.event.inputs.search_page }}
+          HAS_COOKIES: ${{ github.event.inputs.cookies }}
+        run: |
+          mkdir -p "$DL_DIR"
+          if [ "$HAS_COOKIES" != "" ]; then
+            gallery-dl --cookies "$GITHUB_WORKSPACE/cookies.txt"               -g "https://e-hentai.org/?f_search=$KEYWORD&page=$PAGE" 2>&1 | tee "$GITHUB_WORKSPACE/search_urls.txt"
+          else
+            gallery-dl -g "https://e-hentai.org/?f_search=$KEYWORD&page=$PAGE" 2>&1 | tee "$GITHUB_WORKSPACE/search_urls.txt"
+          fi
+
       - name: 下载漫画
+        if: ${{ github.event.inputs.mode == 'download' }}
         env:
           URLS: ${{ github.event.inputs.gallery_urls }}
           HAS_COOKIES: ${{ github.event.inputs.cookies }}
         run: |
           mkdir -p "$DL_DIR"
-          cd "$DL_DIR"
           urls=$(echo "$URLS" | tr ',' '\n')
           for url in $urls; do
             echo "=== 下载: $url ==="
             if [ "$HAS_COOKIES" != "" ]; then
-              gallery-dl --cookies "$GITHUB_WORKSPACE/cookies.txt" \
-                --directory "$DL_DIR" "$url" 2>&1 | tail -20
+              gallery-dl --cookies "$GITHUB_WORKSPACE/cookies.txt"                 --directory "$DL_DIR" "$url" 2>&1 | tail -20
             else
               gallery-dl --directory "$DL_DIR" "$url" 2>&1 | tail -20
             fi
           done
           echo "=== 下载完成，文件列表 ==="
-          find "$DL_DIR" -type f | head -30
+          find "$DL_DIR" -type f | head -50
 
       - name: 打包 ZIP
-        if: ${{ github.event.inputs.output_format == 'zip' }}
+        if: ${{ github.event.inputs.mode == 'download' && github.event.inputs.output_format == 'zip' }}
         run: |
           cd "$DL_DIR"
-          # 找到下载的图片目录，打包
-          find . -type d -name "gallery" -o -type d -name "*[0-9]*" | head -5
-          # gallery-dl 默认输出结构: DL_DIR/站点/分类/标题/图片
+          found=0
           for d in */; do
-            echo "打包目录: $d"
-            zip -r -0 "$DL_DIR/../$(basename "$d" | sed 's/[/ ]/_/g').zip" "$d" 2>&1 | tail -3
+            [ -d "$d" ] || continue
+            found=1
+            name=$(basename "$d" | sed 's/[/ :*?"<>|]/_/g')
+            echo "打包目录: $name"
+            cd "$d"
+            zip -r -0 "$DL_DIR/../${name}.zip" . 2>&1 | tail -2
+            cd "$DL_DIR"
           done
+          if [ $found -eq 0 ]; then
+            echo "未找到下载目录，检查原始结构"
+            find "$DL_DIR" -type f | head -20
+          fi
           cd "$DL_DIR/.."
           ls -lh *.zip 2>/dev/null || echo "未生成zip"
 
@@ -102,5 +137,6 @@ jobs:
           path: |
             downloads/
             *.zip
+            search_urls.txt
           compression-level: 0
           retention-days: 7
