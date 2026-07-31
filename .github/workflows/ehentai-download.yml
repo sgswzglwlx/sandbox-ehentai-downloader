@@ -116,14 +116,15 @@ jobs:
           soup = BeautifulSoup(resp.text, 'html.parser')
 
           results = []
-          for tr in soup.select('table.itg.gllist tr'):
-              name_el = tr.select_one('.glink')
-              if not name_el:
+          for glink in soup.select('.glink'):
+              title = glink.get_text(strip=True)
+              if not title:
                   continue
-              title = name_el.get_text(strip=True)
-              a = tr.select_one('a')
+              a = glink.find_parent('a')
               href = a['href'] if a and a.has_attr('href') else ''
-              info = tr.get_text(' ', strip=True)[:180]
+              # 向上找 tr 获取更多信息
+              tr = glink.find_parent('tr')
+              info = tr.get_text(' ', strip=True)[:180] if tr else ''
               results.append((title, href, info))
 
           out = [f'搜索: {keyword} (第{page}页) | 找到 {len(results)} 个画廊', '=' * 90]
