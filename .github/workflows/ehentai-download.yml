@@ -105,6 +105,14 @@ jobs:
           url = f'https://e-hentai.org/?f_search={keyword}&page={page}'
           resp = requests.get(url, headers=headers, cookies=cj, timeout=30)
           print(f'HTTP {resp.status_code}, 页面大小: {len(resp.text)}')
+          # 保存 HTML 供调试
+          with open('debug_page.html', 'w', encoding='utf-8') as f:
+              f.write(resp.text)
+          # 打印前 3000 字符
+          print('=== HTML 前 3000 字符 ===')
+          print(resp.text[:3000])
+          print('=== HTML 尾部 2000 字符 ===')
+          print(resp.text[-2000:])
           soup = BeautifulSoup(resp.text, 'html.parser')
 
           results = []
