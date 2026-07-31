@@ -188,6 +188,25 @@ jobs:
               title = safe_name(title_el.get_text(strip=True)) if title_el else f'gallery_{int(time.time())}'
               print(f'标题: {title}')
 
+              # 调试：保存画廊页 HTML
+              with open('gallery_debug.html', 'w', encoding='utf-8') as f:
+                  f.write(resp.text)
+              # 打印所有含 pages 的文本
+              for el in soup.find_all(string=lambda t: t and 'page' in t.lower()):
+                  parent = el.parent
+                  if parent and parent.name in ('div', 'span', 'td', 'a'):
+                      print(f'PAGES-EL: <{parent.name} class="{parent.get("class", "")}"> {parent.get_text(strip=True)[:80]}')
+                      if parent.has_attr('data-limit'):
+                          print(f'  data-limit={parent["data-limit"]}')
+              # 打印分页导航
+              nav = soup.select_one('.ptt')
+              if nav:
+                  print('PTT-NAV:', nav.get_text(' ', strip=True)[:200])
+              else:
+                  print('NO PTT NAV')
+              for a in soup.select('a[href*="?p="], a[href*="&p="]')[:10]:
+                  print(f'PAGELINK: {a.get_text(strip=True)[:30]} -> {a.get("href", "")[:80]}')
+
               # 2. 提取每页详情页链接（处理列表分页，每页20个）
               page_links = []
               def collect_links(bs):
