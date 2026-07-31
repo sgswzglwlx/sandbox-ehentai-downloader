@@ -147,19 +147,114 @@ jobs:
         if: ${{ github.event.inputs.mode == 'download' }}
         env:
           URLS: ${{ github.event.inputs.gallery_urls }}
-          HAS_COOKIES: ${{ github.event.inputs.cookies }}
+          COOKIE_STR: ${{ github.event.inputs.cookies }}
+          DL_DIR: ${{ env.DL_DIR }}
         run: |
-          mkdir -p "$DL_DIR"
-          urls=$(echo "$URLS" | tr ',' '\n')
-          for url in $urls; do
-            echo "=== 下载: $url ==="
-            if [ "$HAS_COOKIES" != "" ]; then
-              gallery-dl --cookies "$GITHUB_WORKSPACE/cookies.txt" \
-                --directory "$DL_DIR" "$url" 2>&1 | tail -20
-            else
-              gallery-dl --directory "$DL_DIR" "$url" 2>&1 | tail -20
-            fi
-          done
+          python3 << 'PYEOF'
+          import requests, re, os, time, sys
+          from bs4 import BeautifulSoup
+
+          urls = [u.strip() for u in os.environ.get('URLS', '').split(',') if u.strip()]
+          cookie_str = os.environ.get('COOKIE_STR', '')
+          dl_dir = os.environ.get('DL_DIR', './downloads')
+
+          headers = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Accept-Language': 'en-US,en;q=0.9',
+          }
+          cj = {}
+          if cookie_str:
+              for p in cookie_str.split(';'):
+                  if '=' in p:
+                      k, _, v = p.partition('=')
+                      cj[k.strip()] = v.strip()
+          s = requests.Session()
+          s.headers.update(headers)
+          s.cookies.update(cj)
+
+          def safe_name(name):
+              return re.sub(r'[\\/:*?"<>|\n\r\t]', '_', name).strip()[:150]
+
+          for gallery_url in urls:
+              print(f'=== 处理画廊: {gallery_url} ===')
+              # 1. 获取画廊页
+              resp = s.get(gallery_url, timeout=30)
+              print(f'画廊页 HTTP {resp.status_code}, {len(resp.text)} bytes')
+              soup = BeautifulSoup(resp.text, 'html.parser')
+
+              # 提取标题
+              title_el = soup.select_one('#gn') or soup.select_one('h1')
+              title = safe_name(title_el.get_text(strip=True)) if title_el else f'gallery_{int(time.time())}'
+              print(f'标题: {title}')
+
+              # 2. 提取每页详情页链接
+              page_links = []
+              # 方式1: #gdt 容器里的 .gdtm a
+              for a in soup.select('#gdt .gdtm a, #gdt a'):
+                  href = a.get('href', '')
+                  if '/s/' in href and href not in page_links:
+                      page_links.append(href)
+              # 方式2: 如果没有 #gdt，找所有 /s/ 链接
+              if not page_links:
+                  for a in soup.select('a[href*="/s/"]'):
+                      href = a.get('href', '')
+                      if href not in page_links:
+                          page_links.append(href)
+              print(f'找到 {len(page_links)} 个页面链接')
+
+              # 3. 获取图片总数（原图页）
+              img_urls = []
+              for i, link in enumerate(page_links):
+                  try:
+                      presp = s.get(link, timeout=30)
+                      psoup = BeautifulSoup(presp.text, 'html.parser')
+                      # 原图URL在 #img 的 src 属性
+                      img = psoup.select_one('#img')
+                      if img and img.has_attr('src'):
+                          img_urls.append(img['src'])
+                      else:
+                          # 备选: .sn-img img
+                          img2 = psoup.select_one('img')
+                          if img2 and img2.has_attr('src'):
+                              img_urls.append(img2['src'])
+                          else:
+                              print(f'  第{i+1}页: 未找到图片URL')
+                      if (i+1) % 10 == 0:
+                          print(f'  已解析 {i+1}/{len(page_links)} 页')
+                  except Exception as e:
+                      print(f'  第{i+1}页解析失败: {e}')
+                  time.sleep(0.3)
+
+              print(f'共获取 {len(img_urls)} 张图片URL')
+              if not img_urls:
+                  print('!! 未获取到任何图片URL，跳过')
+                  continue
+
+              # 4. 下载所有图片
+              save_dir = os.path.join(dl_dir, title)
+              os.makedirs(save_dir, exist_ok=True)
+              for i, url in enumerate(img_urls, 1):
+                  try:
+                      img_headers = dict(headers)
+                      img_headers['Referer'] = gallery_url
+                      r = s.get(url, headers=img_headers, timeout=30)
+                      if r.status_code == 200:
+                          ext = os.path.splitext(url.split('?')[0])[1] or '.jpg'
+                          fname = f'{i:04d}{ext}'
+                          with open(os.path.join(save_dir, fname), 'wb') as f:
+                              f.write(r.content)
+                          if i % 10 == 0 or i == len(img_urls):
+                              print(f'  [{i}/{len(img_urls)}] 已保存 {fname} ({len(r.content)//1024}KB)')
+                      else:
+                          print(f'  [{i}/{len(img_urls)}] HTTP {r.status_code} 下载失败')
+                      time.sleep(0.2)
+                  except Exception as e:
+                      print(f'  [{i}/{len(img_urls)}] 下载异常: {e}')
+              print(f'✔ 画廊下载完成: {title} -> {save_dir}')
+
+          print('ALL_DONE')
+          PYEOF
           echo "=== 下载完成，文件列表 ==="
           find "$DL_DIR" -type f | head -50
 
