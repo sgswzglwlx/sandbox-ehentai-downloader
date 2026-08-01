@@ -12,6 +12,10 @@ on:
         required: false
         type: string
 
+env:
+  INPUT_URLS: ${{ github.event.inputs.urls }}
+  INPUT_HEADERS: ${{ github.event.inputs.headers }}
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
@@ -31,7 +35,7 @@ jobs:
         run: |
           mkdir -p out
           cat > fetch.py << 'PYEOF'
-          import requests, json, os, re
+          import requests, json, os
           urls = os.environ['INPUT_URLS'].split('|')
           headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"}
           extra = os.environ.get('INPUT_HEADERS', '')
@@ -43,8 +47,8 @@ jobs:
               u = u.strip()
               if not u: continue
               try:
-                  r = requests.get(u, headers=headers, timeout=30)
-                  results.append({"url": u, "status": r.status_code, "body": r.text[:500000]})
+                  r = requests.get(u, headers=headers, timeout=40)
+                  results.append({"url": u, "status": r.status_code, "body": r.text[:800000]})
                   print(f"[{i}] {u} -> {r.status_code}, {len(r.content)} bytes")
               except Exception as e:
                   results.append({"url": u, "status": "ERR", "body": str(e)})
