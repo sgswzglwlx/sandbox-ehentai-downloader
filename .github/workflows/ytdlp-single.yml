@@ -7,6 +7,11 @@ on:
         description: '视频名称'
         required: true
         type: string
+      quality:
+        description: '清晰度 best/480/720 (默认best)'
+        required: false
+        type: string
+        default: 'best'
       url:
         description: '视频URL'
         required: true
@@ -26,7 +31,13 @@ jobs:
       - name: 下载视频
         run: |
           mkdir -p out
-          yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'bestvideo+bestaudio' --merge-output-format mp4 -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          if [ "${{ github.event.inputs.quality }}" = "480" ]; then
+            yt-dlp -f 'best[height<=480]' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          elif [ "${{ github.event.inputs.quality }}" = "720" ]; then
+            yt-dlp -f 'best[height<=720]' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          else
+            yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'bestvideo+bestaudio' --merge-output-format mp4 -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          fi
           echo "---" 
           ls -la out/
 
