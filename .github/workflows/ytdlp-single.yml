@@ -1,0 +1,38 @@
+name: yt-dlp 单视频下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: '视频名称'
+        required: true
+        type: string
+      url:
+        description: '视频URL'
+        required: true
+        type: string
+
+env:
+  INPUT_NAME: ${{ github.event.inputs.name }}
+  INPUT_URL: ${{ github.event.inputs.url }}
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装 yt-dlp
+        run: pip install -q -U yt-dlp
+
+      - name: 下载视频
+        run: |
+          mkdir -p out
+          yt-dlp -f 'best[height<=1080]' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          echo "---" 
+          ls -la out/
+
+      - name: 上传视频
+        uses: actions/upload-artifact@v4
+        with:
+          name: video_${{ github.event.inputs.name }}
+          path: out/
+          retention-days: 7
