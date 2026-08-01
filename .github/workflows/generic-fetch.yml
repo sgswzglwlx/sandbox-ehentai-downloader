@@ -1,0 +1,61 @@
+name: 通用URL抓取
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: 'URL列表（多个用 | 分隔）'
+        required: true
+        type: string
+      headers:
+        description: '自定义请求头（JSON，可选）'
+        required: false
+        type: string
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: pip install -q requests
+
+      - name: 抓取 URL
+        run: |
+          mkdir -p out
+          cat > fetch.py << 'PYEOF'
+          import requests, json, os, re
+          urls = os.environ['INPUT_URLS'].split('|')
+          headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"}
+          extra = os.environ.get('INPUT_HEADERS', '')
+          if extra:
+              try: headers.update(json.loads(extra))
+              except: pass
+          results = []
+          for i, u in enumerate(urls):
+              u = u.strip()
+              if not u: continue
+              try:
+                  r = requests.get(u, headers=headers, timeout=30)
+                  results.append({"url": u, "status": r.status_code, "body": r.text[:500000]})
+                  print(f"[{i}] {u} -> {r.status_code}, {len(r.content)} bytes")
+              except Exception as e:
+                  results.append({"url": u, "status": "ERR", "body": str(e)})
+                  print(f"[{i}] {u} -> ERR {e}")
+          with open('out/result.json', 'w') as f:
+              json.dump(results, f, ensure_ascii=False)
+          PYEOF
+          python3 fetch.py
+
+      - name: 上传结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: fetched
+          path: out/
