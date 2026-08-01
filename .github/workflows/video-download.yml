@@ -1,0 +1,75 @@
+name: 视频批量下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      url_pairs:
+        description: '名称|URL 列表（多组用 换行 分隔）'
+        required: true
+        type: string
+
+env:
+  INPUT_URL_PAIRS: ${{ github.event.inputs.url_pairs }}
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 下载视频
+        run: |
+          mkdir -p out
+          cat > dl.py << 'PYEOF'
+          import requests, os, re, json
+          pairs_raw = os.environ['INPUT_URL_PAIRS'].strip()
+          pairs = []
+          for line in pairs_raw.split('\n'):
+              line = line.strip()
+              if not line: continue
+              if '|' in line:
+                  name, url = line.split('|', 1)
+              else:
+                  name, url = f"video_{len(pairs)}", line
+              pairs.append((name.strip(), url.strip()))
+          headers = {
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36",
+              "Referer": "https://www.xvideos.com/",
+          }
+          results = []
+          for name, url in pairs:
+              try:
+                  r = requests.get(url, headers=headers, timeout=120, stream=True)
+                  if r.status_code == 200:
+                      ext = 'mp4'
+                      fname = f"out/{name}.{ext}"
+                      total = 0
+                      with open(fname, 'wb') as f:
+                          for chunk in r.iter_content(chunk_size=1<<20):
+                              f.write(chunk)
+                              total += len(chunk)
+                      results.append({"name": name, "status": 200, "size": total, "file": fname})
+                      print(f"[OK] {name}: {total/1048576:.1f} MB")
+                  else:
+                      results.append({"name": name, "status": r.status_code, "size": 0, "file": ""})
+                      print(f"[FAIL] {name}: HTTP {r.status_code}")
+              except Exception as e:
+                  results.append({"name": name, "status": "ERR", "size": 0, "file": "", "err": str(e)})
+                  print(f"[FAIL] {name}: {e}")
+          with open('out/manifest.json', 'w') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+          PYEOF
+          python3 dl.py
+
+      - name: 上传视频
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos
+          path: out/
+          retention-days: 7
