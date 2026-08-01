@@ -26,7 +26,7 @@ jobs:
       - name: 下载视频
         run: |
           mkdir -p out
-          yt-dlp -f 'best[height<=1080]' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'bestvideo+bestaudio' --merge-output-format mp4 -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
           echo "---" 
           ls -la out/
 
