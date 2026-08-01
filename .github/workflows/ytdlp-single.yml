@@ -31,10 +31,11 @@ jobs:
       - name: 下载视频
         run: |
           mkdir -p out
-          if [ "${{ github.event.inputs.quality }}" = "480" ]; then
-            yt-dlp -f 'best[height<=480]' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
-          elif [ "${{ github.event.inputs.quality }}" = "720" ]; then
-            yt-dlp -f 'best[height<=720]' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          QUALITY="${{ github.event.inputs.quality }}"
+          if [ "$QUALITY" = "480" ]; then
+            yt-dlp -S "res:480" -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+          elif [ "$QUALITY" = "720" ]; then
+            yt-dlp -S "res:720" -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
           else
             yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'bestvideo+bestaudio' --merge-output-format mp4 -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
           fi
