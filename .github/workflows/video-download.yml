@@ -23,6 +23,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: 安装依赖
+        run: pip install -q requests
+
       - name: 下载视频
         run: |
           mkdir -p out
