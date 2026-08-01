@@ -1,0 +1,75 @@
+name: yt-dlp 视频下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      url_pairs:
+        description: '名称|URL 列表（多组用换行分隔）'
+        required: true
+        type: string
+
+env:
+  INPUT_URL_PAIRS: ${{ github.event.inputs.url_pairs }}
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 yt-dlp
+        run: |
+          pip install -q -U yt-dlp
+
+      - name: 下载视频
+        run: |
+          mkdir -p out
+          cat > dl.py << 'PYEOF'
+          import os, json
+          pairs_raw = os.environ['INPUT_URL_PAIRS'].strip()
+          pairs = []
+          for line in pairs_raw.split('\n'):
+              line = line.strip()
+              if not line: continue
+              if '|' in line:
+                  name, url = line.split('|', 1)
+              else:
+                  name, url = f"video_{len(pairs)}", line
+              pairs.append((name.strip(), url.strip()))
+          results = []
+          for name, url in pairs:
+              try:
+                  import subprocess
+                  # 先解析获取直链
+                  r = subprocess.run(['yt-dlp', '-g', '-f', 'best', url], capture_output=True, text=True, timeout=180)
+                  direct = r.stdout.strip().split('\n')[-1] if r.stdout.strip() else ''
+                  if not direct:
+                      results.append({"name": name, "status": "ERR", "err": r.stderr[-300:]})
+                      print(f"[FAIL] {name}: 无法解析直链 {r.stderr[-200:]}")
+                      continue
+                  # 下载
+                  outfile = f'out/{name}.mp4'
+                  r2 = subprocess.run(['yt-dlp', '-f', 'best', '-o', outfile, '--no-part', url],
+                                      capture_output=True, text=True, timeout=600)
+                  if os.path.exists(outfile) and os.path.getsize(outfile) > 0:
+                      sz = os.path.getsize(outfile)
+                      results.append({"name": name, "status": 200, "size": sz, "file": outfile, "direct": direct})
+                      print(f"[OK] {name}: {sz/1048576:.1f} MB direct={direct[:80]}")
+                  else:
+                      results.append({"name": name, "status": "ERR", "err": r2.stderr[-300:]})
+                      print(f"[FAIL] {name}: 下载失败 {r2.stderr[-200:]}")
+              except Exception as e:
+                  results.append({"name": name, "status": "ERR", "err": str(e)})
+                  print(f"[FAIL] {name}: {e}")
+          with open('out/manifest.json', 'w') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+          PYEOF
+          python3 dl.py
+
+      - name: 上传视频
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos
+          path: out/
+          retention-days: 7
