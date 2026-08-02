@@ -9,6 +9,9 @@ on:
         type: string
         default: 'https://codeload.github.com/iam-akuzihs/StarRailData/tar.gz/refs/heads/master'
 
+permissions:
+  contents: write
+
 jobs:
   download:
     runs-on: ubuntu-latest
