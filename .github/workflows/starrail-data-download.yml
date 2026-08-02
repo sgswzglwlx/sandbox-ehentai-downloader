@@ -22,10 +22,14 @@ jobs:
           ls -lh starrail-data.tar.gz
           file starrail-data.tar.gz
 
-      - name: 上传artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: starrail-data
-          path: starrail-data.tar.gz
-          retention-days: 1
-          if-no-files-found: error
+      - name: 上传Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="starrail-data-$(date +%s)"
+          echo "TAG=$TAG"
+          gh release create "$TAG" starrail-data.tar.gz \
+            --repo "${{ github.repository }}" \
+            --title "StarRailData" \
+            --notes "auto download $(date -u)"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
