@@ -25,70 +25,70 @@ jobs:
           ls -lh chunks/
           echo "分片数: $(ls chunks | wc -l)"
 
-      - name: 上传分片(组1: part_00-04)
+      - name: "上传分片(组1: part_00-04)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-0
           path: chunks/part_0*
           if-no-files-found: warn
 
-      - name: 上传分片(组2: part_05-09)
+      - name: "上传分片(组2: part_05-09)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-1
           path: chunks/part_1*
           if-no-files-found: warn
 
-      - name: 上传分片(组3: part_10-14)
+      - name: "上传分片(组3: part_10-14)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-2
           path: chunks/part_2*
           if-no-files-found: warn
 
-      - name: 上传分片(组4: part_15-19)
+      - name: "上传分片(组4: part_15-19)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-3
           path: chunks/part_3*
           if-no-files-found: warn
 
-      - name: 上传分片(组5: part_20-24)
+      - name: "上传分片(组5: part_20-24)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-4
           path: chunks/part_4*
           if-no-files-found: warn
 
-      - name: 上传分片(组5b: part_25+)
+      - name: "上传分片(组5b: part_25+)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-5
           path: chunks/part_5*
           if-no-files-found: warn
 
-      - name: 上传分片(组6: part_6+)
+      - name: "上传分片(组6: part_6+)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-6
           path: chunks/part_6*
           if-no-files-found: warn
 
-      - name: 上传分片(组7: part_7+)
+      - name: "上传分片(组7: part_7+)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-7
           path: chunks/part_7*
           if-no-files-found: warn
 
-      - name: 上传分片(组8: part_8+)
+      - name: "上传分片(组8: part_8+)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-8
           path: chunks/part_8*
           if-no-files-found: warn
 
-      - name: 上传分片(组9: part_9+)
+      - name: "上传分片(组9: part_9+)"
         uses: actions/upload-artifact@v4
         with:
           name: sr-part-9
