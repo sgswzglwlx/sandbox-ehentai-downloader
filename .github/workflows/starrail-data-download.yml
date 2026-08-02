@@ -1,0 +1,31 @@
+name: StarRailData下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: '下载URL(默认codeload tarball)'
+        required: false
+        type: string
+        default: 'https://codeload.github.com/iam-akuzihs/StarRailData/tar.gz/refs/heads/master'
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 下载
+        run: |
+          URL="${{ github.event.inputs.url }}"
+          echo "下载: $URL"
+          curl -sL --retry 5 --retry-delay 3 -o starrail-data.tar.gz "$URL"
+          ls -lh starrail-data.tar.gz
+          file starrail-data.tar.gz
+
+      - name: 上传artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: starrail-data
+          path: starrail-data.tar.gz
+          retention-days: 1
+          if-no-files-found: error
