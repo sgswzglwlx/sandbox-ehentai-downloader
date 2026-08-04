@@ -14,6 +14,8 @@ print("[DIAG] INPUT_MAGNET2 =", repr(os.environ.get('INPUT_MAGNET2', '')), flush
 print("[DIAG] python:", sys.version.split()[0], flush=True)
 print("[DIAG] cwd:", os.getcwd(), flush=True)
 
+DRY_RUN = os.environ.get('DRY_RUN', '') == '1'
+print(f"[INFO] DRY_RUN={DRY_RUN}", flush=True)
 magnets = []
 for key in ('INPUT_MAGNET1', 'INPUT_MAGNET2'):
     m = os.environ.get(key, '').strip()
@@ -79,10 +81,15 @@ try:
             mag,
         ]
         try:
-            logf = open(f"out/aria{idx}.log", "a")
+            if DRY_RUN:
+                print(f"[DRY] 任务{idx} 模拟执行，不启动 aria2", flush=True)
+                time.sleep(2)
+                info["status"] = "dry_run"
+                info["size"] = 0
+                results[-1] = info
+                continue
             proc = subprocess.Popen(
-                cmd, stdout=logf, stderr=subprocess.STDOUT,
-                text=True
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
         except Exception as e:
             print(f"[ERROR] 任务{idx} Popen失败: {e}", flush=True)
