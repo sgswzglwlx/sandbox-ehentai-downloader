@@ -79,17 +79,20 @@ jobs:
           INPUT_MAGNET2: ${{ github.event.inputs.magnet2 }}
         run: |
           set +e
-          echo "=== 步骤1: DRY_RUN 验证脚本 ==="
-          export DRY_RUN=1
-          timeout 30 python3 bt_runner.py
-          echo "DRY_EXIT=$?"
-          unset DRY_RUN
-          echo ""
-          echo "=== 步骤2: 真实运行 ==="
-          python3 bt_runner.py
-          echo "REAL_EXIT=$?"
+          mkdir -p out
+          TRACKERS="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,udp://tracker.openbittorrent.com:6969/announce,udp://exodus.desync.com:6969/announce,udp://tracker.torrent.eu.org:451/announce,http://tracker.opentrackr.org:1337/announce,https://tracker.gbitt.info:443/announce,http://tracker.gbitt.info:80/announce"
+          i=1
+          for mag in "$INPUT_MAGNET1" "$INPUT_MAGNET2"; do
+            [ -z "$mag" ] && continue
+            mkdir -p out/task$i
+            echo "=== 任务$i 开始: ${mag:0:60} ==="
+            timeout 150 aria2c --dir=out/task$i               --enable-dht=false --enable-peer-exchange=false --bt-enable-lpd=false               --bt-tracker="$TRACKERS"               --max-connection-per-server=8 --split=8 --bt-max-peers=50               --seed-time=0 --bt-save-metadata=true               --console-log-level=error --summary-interval=0               "$mag"
+            echo "任务$i aria2退出码: $? (124=超时)"
+            du -sh out/task$i 2>/dev/null
+            i=$((i+1))
+          done
           echo "=== out 目录 ==="
-          ls -laR out/ 2>/dev/null | head -40 || echo "(out 不存在)"
+          ls -laR out/ 2>/dev/null | head -60 || echo "(out 不存在)"
           echo "=== parts 目录 ==="
           ls -la parts/ 2>/dev/null || echo "(无分卷)"
           exit 0
