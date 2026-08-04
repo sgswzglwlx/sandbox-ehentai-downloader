@@ -1,0 +1,166 @@
+name: BT磁力下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      magnet1:
+        description: '磁力链接1 (magnet:?xt=urn:btih:...)'
+        required: false
+        type: string
+      magnet2:
+        description: '磁力链接2 (magnet:?xt=urn:btih:...)'
+        required: false
+        type: string
+
+env:
+  INPUT_MAGNET1: ${{ github.event.inputs.magnet1 }}
+  INPUT_MAGNET2: ${{ github.event.inputs.magnet2 }}
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 aria2
+        run: sudo apt-get update -q && sudo apt-get install -y -q aria2 zip
+
+      - name: 下载磁力
+        run: |
+          mkdir -p out
+          cat > bt.py << 'PYEOF'
+          import os, subprocess, time, json, shutil
+
+          magnets = []
+          for key in ('INPUT_MAGNET1', 'INPUT_MAGNET2'):
+              m = os.environ.get(key, '').strip()
+              if m:
+                  magnets.append(m)
+
+          trackers = ",".join([
+              "udp://tracker.opentrackr.org:1337/announce",
+              "udp://open.demonii.com:1337/announce",
+              "udp://tracker.openbittorrent.com:6969/announce",
+              "udp://exodus.desync.com:6969/announce",
+              "udp://tracker.torrent.eu.org:451/announce",
+              "udp://tracker.moeking.me:6969/announce",
+              "udp://tracker.tiny-vps.com:6969/announce",
+              "http://tracker.opentrackr.org:1337/announce",
+              "https://tracker.gbitt.info:443/announce",
+              "http://tracker.gbitt.info:80/announce",
+          ])
+
+          MAX_SIZE = 350 * 1024 * 1024   # 单任务上限 350MiB
+          PER_TASK_TIMEOUT = 2400        # 单任务 40 分钟
+
+          def dir_size(path):
+              total = 0
+              for root, dirs, files in os.walk(path):
+                  for f in files:
+                      try: total += os.path.getsize(os.path.join(root, f))
+                      except: pass
+              return total
+
+          results = []
+          for idx, mag in enumerate(magnets, 1):
+              outdir = f"out/task{idx}"
+              os.makedirs(outdir, exist_ok=True)
+              info = {"index": idx, "magnet": mag, "status": "running", "size": 0}
+              results.append(info)
+              cmd = [
+                  "aria2c", "--dir=" + outdir,
+                  "--enable-dht=true", "--dht-listen-port=6881-6999",
+                  "--dht-entry-point=router.bittorrent.com:6881",
+                  "--dht-entry-point6=router.utorrent.com:6881",
+                  "--enable-peer-exchange=true", "--bt-enable-lpd=true",
+                  "--bt-tracker=" + trackers,
+                  "--max-connection-per-server=16", "--split=16",
+                  "--seed-time=0", "--bt-save-metadata=true",
+                  "--console-log-level=warn", "--summary-interval=30",
+                  mag,
+              ]
+              proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              start = time.time()
+              try:
+                  while proc.poll() is None:
+                      if dir_size(outdir) > MAX_SIZE:
+                          print(f"[LIMIT] task{idx} 超限停止")
+                          proc.terminate()
+                          try: proc.wait(timeout=10)
+                          except: proc.kill()
+                          info["status"] = "size_limit"
+                          break
+                      if time.time() - start > PER_TASK_TIMEOUT:
+                          print(f"[TIMEOUT] task{idx} 超时停止")
+                          proc.terminate()
+                          try: proc.wait(timeout=10)
+                          except: proc.kill()
+                          info["status"] = "timeout"
+                          break
+                      time.sleep(5)
+                  if info["status"] == "running":
+                      rc = proc.wait(timeout=15)
+                      info["status"] = "done" if rc == 0 else f"exit_{rc}"
+              except Exception as e:
+                  proc.kill()
+                  info["status"] = f"err:{e}"
+              info["size"] = dir_size(outdir)
+              print(f"[RESULT] task{idx}: {info['status']} size={info['size']/1048576:.1f}MiB")
+
+          with open("out/manifest.json", "w") as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+
+          total = dir_size("out")
+          print(f"[TOTAL] {total/1048576:.1f} MiB")
+          if total > 380 * 1024 * 1024:
+              os.makedirs("parts", exist_ok=True)
+              subprocess.run(["zip", "-r", "-s", "300m", "parts/bt.zip", "out"], check=False)
+              print("[PACK] 已分卷打包到 parts/")
+          PYEOF
+          python3 bt.py
+          echo "=== out 目录 ==="
+          ls -laR out/ | head -80
+          echo "=== parts 目录 ==="
+          ls -la parts/ 2>/dev/null || echo "(无分卷)"
+
+      - name: 上传 artifact（整体）
+        if: hashFiles('parts/*') == ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt-files
+          path: out/
+          retention-days: 7
+
+      - name: 上传分卷 z01
+        if: hashFiles('parts/bt.z01')
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt-part1
+          path: parts/bt.z01
+          retention-days: 7
+
+      - name: 上传分卷 z02
+        if: hashFiles('parts/bt.z02')
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt-part2
+          path: parts/bt.z02
+          retention-days: 7
+
+      - name: 上传分卷 z03
+        if: hashFiles('parts/bt.z03')
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt-part3
+          path: parts/bt.z03
+          retention-days: 7
+
+      - name: 上传分卷 zip
+        if: hashFiles('parts/bt.zip')
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt-partZ
+          path: parts/bt.zip
+          retention-days: 7
