@@ -1,0 +1,56 @@
+name: BT元数据获取
+
+on:
+  workflow_dispatch:
+    inputs:
+      magnet1:
+        description: '磁力链接1'
+        required: false
+        type: string
+      magnet2:
+        description: '磁力链接2'
+        required: false
+        type: string
+
+env:
+  INPUT_MAGNET1: ${{ github.event.inputs.magnet1 }}
+  INPUT_MAGNET2: ${{ github.event.inputs.magnet2 }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 安装 aria2
+        run: sudo apt-get update -q && sudo apt-get install -y -q aria2
+
+      - name: 获取元数据
+        run: |
+          set +e
+          mkdir -p meta
+          TRACKERS="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,udp://tracker.openbittorrent.com:6969/announce,udp://exodus.desync.com:6969/announce,udp://tracker.torrent.eu.org:451/announce,http://tracker.opentrackr.org:1337/announce,https://tracker.gbitt.info:443/announce"
+          i=1
+          for mag in "$INPUT_MAGNET1" "$INPUT_MAGNET2"; do
+            [ -z "$mag" ] && continue
+            echo "=== 获取任务$i 元数据 ==="
+            timeout 150 aria2c --dir=meta --bt-metadata-only=true --bt-save-metadata=true \
+              --enable-dht=true --dht-listen-port=6881-6999 \
+              --dht-entry-point=router.bittorrent.com:6881 \
+              --enable-peer-exchange=true \
+              --bt-tracker="$TRACKERS" \
+              --console-log-level=error --summary-interval=0 \
+              "$mag"
+            echo "任务$i 退出码: $?"
+            i=$((i+1))
+          done
+          echo "=== meta 目录 ==="
+          ls -la meta/
+          find meta/ -name "*.torrent" -exec ls -la {} \;
+          exit 0
+
+      - name: 上传元数据
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt-metadata
+          path: meta/
+          retention-days: 7
