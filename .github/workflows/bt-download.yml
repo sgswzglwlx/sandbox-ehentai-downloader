@@ -49,6 +49,30 @@ jobs:
           echo "=== bt_runner.py 检查 ==="
           ls -la bt_runner.py && head -5 bt_runner.py
 
+      - name: aria2 冒烟测试
+        run: |
+          echo "=== aria2 版本 ==="
+          aria2c --version | head -2
+          echo "=== HTTP 下载测试 (1MB) ==="
+          mkdir -p /tmp/smoke
+          timeout 60 aria2c --dir=/tmp/smoke -o test.bin \
+            --console-log-level=error --summary-interval=0 \
+            --max-download-limit=200K \
+            "http://speedtest.tele2.net/1MB.zip" 2>&1 | tail -5
+          echo "SMOKE_EXIT=$?"
+          ls -la /tmp/smoke/
+          echo "=== 磁力元数据获取测试 (60秒) ==="
+          timeout 60 aria2c --dir=/tmp/smoke \
+            --enable-dht=true --dht-listen-port=6881-6999 \
+            --dht-entry-point=router.bittorrent.com:6881 \
+            --enable-peer-exchange=true \
+            --bt-tracker="udp://tracker.opentrackr.org:1337/announce" \
+            --bt-metadata-only=true --bt-save-metadata=true \
+            --console-log-level=error --summary-interval=0 \
+            "magnet:?xt=urn:btih:963fd90eee4db809ed4224d1ca7a0639c443cf4b" 2>&1 | tail -5
+          echo "META_EXIT=$?"
+          ls -la /tmp/smoke/
+
       - name: 运行下载
         env:
           INPUT_MAGNET1: ${{ github.event.inputs.magnet1 }}
