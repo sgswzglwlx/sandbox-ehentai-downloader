@@ -25,19 +25,24 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 安装 aria2
-        run: sudo apt-get update -q && sudo apt-get install -y -q aria2 zip
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q aria2 zip
+          aria2c --version | head -2
 
       - name: 下载磁力
         run: |
+          set +e
           mkdir -p out
           cat > bt.py << 'PYEOF'
-          import os, subprocess, time, json, shutil
+          import os, subprocess, time, json, sys, traceback
 
           magnets = []
           for key in ('INPUT_MAGNET1', 'INPUT_MAGNET2'):
               m = os.environ.get(key, '').strip()
               if m:
                   magnets.append(m)
+          print(f"[INFO] 收到 {len(magnets)} 个磁力链接", flush=True)
 
           trackers = ",".join([
               "udp://tracker.opentrackr.org:1337/announce",
@@ -52,78 +57,111 @@ jobs:
               "http://tracker.gbitt.info:80/announce",
           ])
 
-          MAX_SIZE = 350 * 1024 * 1024   # 单任务上限 350MiB
-          PER_TASK_TIMEOUT = 2400        # 单任务 40 分钟
+          MAX_SIZE = 350 * 1024 * 1024
+          PER_TASK_TIMEOUT = 2400
 
           def dir_size(path):
               total = 0
               for root, dirs, files in os.walk(path):
                   for f in files:
-                      try: total += os.path.getsize(os.path.join(root, f))
-                      except: pass
+                      try:
+                          total += os.path.getsize(os.path.join(root, f))
+                      except Exception:
+                          pass
               return total
 
           results = []
-          for idx, mag in enumerate(magnets, 1):
-              outdir = f"out/task{idx}"
-              os.makedirs(outdir, exist_ok=True)
-              info = {"index": idx, "magnet": mag, "status": "running", "size": 0}
-              results.append(info)
-              cmd = [
-                  "aria2c", "--dir=" + outdir,
-                  "--enable-dht=true", "--dht-listen-port=6881-6999",
-                  "--dht-entry-point=router.bittorrent.com:6881",
-                  "--dht-entry-point6=router.utorrent.com:6881",
-                  "--enable-peer-exchange=true", "--bt-enable-lpd=true",
-                  "--bt-tracker=" + trackers,
-                  "--max-connection-per-server=16", "--split=16",
-                  "--seed-time=0", "--bt-save-metadata=true",
-                  "--console-log-level=warn", "--summary-interval=30",
-                  mag,
-              ]
-              proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-              start = time.time()
-              try:
-                  while proc.poll() is None:
-                      if dir_size(outdir) > MAX_SIZE:
-                          print(f"[LIMIT] task{idx} 超限停止")
-                          proc.terminate()
-                          try: proc.wait(timeout=10)
-                          except: proc.kill()
-                          info["status"] = "size_limit"
-                          break
-                      if time.time() - start > PER_TASK_TIMEOUT:
-                          print(f"[TIMEOUT] task{idx} 超时停止")
-                          proc.terminate()
-                          try: proc.wait(timeout=10)
-                          except: proc.kill()
-                          info["status"] = "timeout"
-                          break
-                      time.sleep(5)
-                  if info["status"] == "running":
-                      rc = proc.wait(timeout=15)
-                      info["status"] = "done" if rc == 0 else f"exit_{rc}"
-              except Exception as e:
-                  proc.kill()
-                  info["status"] = f"err:{e}"
-              info["size"] = dir_size(outdir)
-              print(f"[RESULT] task{idx}: {info['status']} size={info['size']/1048576:.1f}MiB")
+          try:
+              for idx, mag in enumerate(magnets, 1):
+                  outdir = f"out/task{idx}"
+                  os.makedirs(outdir, exist_ok=True)
+                  info = {"index": idx, "magnet": mag, "status": "running", "size": 0}
+                  results.append(info)
+                  print(f"[INFO] 任务{idx} 开始: {mag[:60]}...", flush=True)
+                  cmd = [
+                      "aria2c", "--dir=" + outdir,
+                      "--enable-dht=true", "--dht-listen-port=6881-6999",
+                      "--dht-entry-point=router.bittorrent.com:6881",
+                      "--enable-peer-exchange=true", "--bt-enable-lpd=true",
+                      "--bt-tracker=" + trackers,
+                      "--max-connection-per-server=16", "--split=16",
+                      "--seed-time=0", "--bt-save-metadata=true",
+                      "--console-log-level=notice", "--summary-interval=30",
+                      mag,
+                  ]
+                  try:
+                      proc = subprocess.Popen(
+                          cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, bufsize=1
+                      )
+                  except Exception as e:
+                      print(f"[ERROR] 任务{idx} Popen失败: {e}", flush=True)
+                      info["status"] = f"popen_err:{e}"
+                      continue
+                  start = time.time()
+                  # 后台读输出
+                  import threading
+                  def pump(p, tag):
+                      try:
+                          for line in p.stdout:
+                              print(f"[{tag}] {line.rstrip()}", flush=True)
+                      except Exception:
+                          pass
+                  th = threading.Thread(target=pump, args=(proc, f"aria{idx}"), daemon=True)
+                  th.start()
+                  try:
+                      while proc.poll() is None:
+                          if dir_size(outdir) > MAX_SIZE:
+                              print(f"[LIMIT] 任务{idx} 超限停止", flush=True)
+                              proc.terminate()
+                              try:
+                                  proc.wait(timeout=10)
+                              except Exception:
+                                  proc.kill()
+                              info["status"] = "size_limit"
+                              break
+                          if time.time() - start > PER_TASK_TIMEOUT:
+                              print(f"[TIMEOUT] 任务{idx} 超时停止", flush=True)
+                              proc.terminate()
+                              try:
+                                  proc.wait(timeout=10)
+                              except Exception:
+                                  proc.kill()
+                              info["status"] = "timeout"
+                              break
+                          time.sleep(5)
+                      if info["status"] == "running":
+                          rc = proc.wait(timeout=15)
+                          info["status"] = "done" if rc == 0 else f"exit_{rc}"
+                          print(f"[INFO] 任务{idx} aria2退出码: {rc}", flush=True)
+                  except Exception as e:
+                      proc.kill()
+                      info["status"] = f"err:{e}"
+                      print(f"[ERROR] 任务{idx}: {e}", flush=True)
+                  info["size"] = dir_size(outdir)
+                  print(f"[RESULT] 任务{idx}: {info['status']} size={info['size']/1048576:.1f}MiB", flush=True)
 
-          with open("out/manifest.json", "w") as f:
-              json.dump(results, f, ensure_ascii=False, indent=2)
+              with open("out/manifest.json", "w") as f:
+                  json.dump(results, f, ensure_ascii=False, indent=2)
 
-          total = dir_size("out")
-          print(f"[TOTAL] {total/1048576:.1f} MiB")
-          if total > 380 * 1024 * 1024:
-              os.makedirs("parts", exist_ok=True)
-              subprocess.run(["zip", "-r", "-s", "300m", "parts/bt.zip", "out"], check=False)
-              print("[PACK] 已分卷打包到 parts/")
+              total = dir_size("out")
+              print(f"[TOTAL] {total/1048576:.1f} MiB", flush=True)
+              if total > 380 * 1024 * 1024:
+                  os.makedirs("parts", exist_ok=True)
+                  subprocess.run(["zip", "-r", "-s", "300m", "parts/bt.zip", "out"], check=False)
+                  print("[PACK] 已分卷打包到 parts/", flush=True)
+          except Exception:
+              traceback.print_exc()
+              sys.exit(1)
+          print("[DONE] 脚本结束", flush=True)
           PYEOF
           python3 bt.py
+          echo "SCRIPT_EXIT=$?"
           echo "=== out 目录 ==="
-          ls -laR out/ | head -80
+          ls -laR out/ | head -100
           echo "=== parts 目录 ==="
           ls -la parts/ 2>/dev/null || echo "(无分卷)"
+          exit 0
 
       - name: 上传 artifact（整体）
         if: hashFiles('parts/*') == ''
