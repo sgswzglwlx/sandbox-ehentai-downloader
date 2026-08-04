@@ -37,7 +37,7 @@ trackers = ",".join([
 ])
 
 MAX_SIZE = 350 * 1024 * 1024
-PER_TASK_TIMEOUT = 2400
+PER_TASK_TIMEOUT = 480
 
 
 def dir_size(path):
@@ -70,11 +70,11 @@ try:
         print(f"[INFO] 任务{idx} 开始: {mag[:80]}...", flush=True)
         cmd = [
             "aria2c", "--dir=" + outdir,
-            "--enable-dht=true", "--dht-listen-port=6881-6999",
-            "--dht-entry-point=router.bittorrent.com:6881",
-            "--enable-peer-exchange=true", "--bt-enable-lpd=true",
+            "--enable-dht=false", "--enable-peer-exchange=false",
+            "--bt-enable-lpd=false",
             "--bt-tracker=" + trackers,
-            "--max-connection-per-server=16", "--split=16",
+            "--max-connection-per-server=8", "--split=8",
+            "--bt-max-peers=50",
             "--seed-time=0", "--bt-save-metadata=true",
             "--console-log-level=error", "--summary-interval=0",
             "--log=" + f"out/aria{idx}.log",
@@ -97,7 +97,12 @@ try:
             continue
         start = time.time()
         try:
+            last_beat = time.time()
             while proc.poll() is None:
+                now = time.time()
+                if now - last_beat >= 30:
+                    print(f"[BEAT] 任务{idx} 运行中 {int(now-start)}s 大小={dir_size(outdir)/1048576:.1f}MiB", flush=True)
+                    last_beat = now
                 if dir_size(outdir) > MAX_SIZE:
                     print(f"[LIMIT] 任务{idx} 超限停止", flush=True)
                     proc.terminate()
