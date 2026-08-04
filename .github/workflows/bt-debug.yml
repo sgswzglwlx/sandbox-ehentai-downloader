@@ -1,0 +1,42 @@
+name: BT时长测试
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: '测试时长(秒)'
+        required: false
+        type: string
+      magnet:
+        description: '磁力链接'
+        required: false
+        type: string
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 安装 aria2
+        run: sudo apt-get update -q && sudo apt-get install -y -q aria2
+
+      - name: 测试 aria2 运行时长
+        env:
+          SECONDS: ${{ github.event.inputs.seconds }}
+          MAGNET: ${{ github.event.inputs.magnet }}
+        run: |
+          SECS="${SECONDS:-120}"
+          MAG="${MAGNET:-magnet:?xt=urn:btih:963fd90eee4db809ed4224d1ca7a0639c443cf4b}"
+          echo "测试时长: ${SECS}s"
+          echo "开始: $(date +%s) ($(date -u +%H:%M:%S))"
+          timeout "$SECS" aria2c --dir=/tmp/dl \
+            --enable-dht=false --enable-peer-exchange=false --bt-enable-lpd=false \
+            --bt-tracker="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,http://tracker.opentrackr.org:1337/announce" \
+            --seed-time=0 --bt-save-metadata=true \
+            --console-log-level=error --summary-interval=0 \
+            --max-download-limit=100K \
+            "$MAG"
+          echo "退出码: $? ($(date +%s)) ($(date -u +%H:%M:%S))"
+          echo "=== /tmp/dl 内容 ==="
+          ls -laR /tmp/dl 2>/dev/null | head -30
+          echo "=== 完成 ==="
