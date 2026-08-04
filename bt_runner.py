@@ -74,21 +74,21 @@ try:
             "--bt-tracker=" + trackers,
             "--max-connection-per-server=16", "--split=16",
             "--seed-time=0", "--bt-save-metadata=true",
-            "--console-log-level=notice", "--summary-interval=30",
+            "--console-log-level=error", "--summary-interval=0",
+            "--log=" + f"out/aria{idx}.log",
             mag,
         ]
         try:
+            logf = open(f"out/aria{idx}.log", "a")
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1
+                cmd, stdout=logf, stderr=subprocess.STDOUT,
+                text=True
             )
         except Exception as e:
             print(f"[ERROR] 任务{idx} Popen失败: {e}", flush=True)
             info["status"] = f"popen_err:{e}"
             continue
         start = time.time()
-        th = threading.Thread(target=pump, args=(proc, f"aria{idx}"), daemon=True)
-        th.start()
         try:
             while proc.poll() is None:
                 if dir_size(outdir) > MAX_SIZE:
