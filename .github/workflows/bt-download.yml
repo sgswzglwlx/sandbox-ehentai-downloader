@@ -79,9 +79,18 @@ jobs:
           INPUT_MAGNET2: ${{ github.event.inputs.magnet2 }}
         run: |
           set +e
+          echo "=== 步骤1: DRY_RUN 验证脚本 ==="
+          export DRY_RUN=1
+          timeout 30 python3 bt_runner.py
+          echo "DRY_EXIT=$?"
+          unset DRY_RUN
+          echo ""
+          echo "=== 步骤2: 真实运行 ==="
           python3 bt_runner.py
-          echo "SCRIPT_EXIT=$?"
-          ls -laR out/ 2>/dev/null || echo "(out 不存在)"
+          echo "REAL_EXIT=$?"
+          echo "=== out 目录 ==="
+          ls -laR out/ 2>/dev/null | head -40 || echo "(out 不存在)"
+          echo "=== parts 目录 ==="
           ls -la parts/ 2>/dev/null || echo "(无分卷)"
           exit 0
 
