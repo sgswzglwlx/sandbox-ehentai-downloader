@@ -31,12 +31,17 @@ jobs:
           aria2c --version | head -2
 
       - name: 下载磁力
+        env:
+          INPUT_MAGNET1: ${{ github.event.inputs.magnet1 }}
+          INPUT_MAGNET2: ${{ github.event.inputs.magnet2 }}
         run: |
           set +e
           mkdir -p out
           cat > bt.py << 'PYEOF'
           import os, subprocess, time, json, sys, traceback
 
+          print("[DIAG] INPUT_MAGNET1 =", repr(os.environ.get('INPUT_MAGNET1','')), flush=True)
+          print("[DIAG] INPUT_MAGNET2 =", repr(os.environ.get('INPUT_MAGNET2','')), flush=True)
           magnets = []
           for key in ('INPUT_MAGNET1', 'INPUT_MAGNET2'):
               m = os.environ.get(key, '').strip()
@@ -158,13 +163,34 @@ jobs:
           python3 bt.py
           echo "SCRIPT_EXIT=$?"
           echo "=== out 目录 ==="
-          ls -laR out/ | head -100
+          ls -laR out/ 2>/dev/null || echo "(out 不存在)"
           echo "=== parts 目录 ==="
           ls -la parts/ 2>/dev/null || echo "(无分卷)"
           exit 0
 
+      - name: 上传诊断日志
+        if: always()
+        run: |
+          mkdir -p diag
+          # 把当前步骤日志打包（如果存在）
+          echo "magnet1=${{ github.event.inputs.magnet1 }}" > diag/inputs.txt
+          echo "magnet2=${{ github.event.inputs.magnet2 }}" >> diag/inputs.txt
+          ls -laR out/ >> diag/inputs.txt 2>&1 || true
+          echo "--- bt.py 是否存在 ---" >> diag/inputs.txt
+          ls -la bt.py >> diag/inputs.txt 2>&1 || echo "bt.py 不存在" >> diag/inputs.txt
+          echo "--- manifest ---" >> diag/inputs.txt
+          cat out/manifest.json >> diag/inputs.txt 2>&1 || echo "(无 manifest)" >> diag/inputs.txt
+
+      - name: 上传诊断 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bt-diagnostics
+          path: diag/
+          retention-days: 7
+
       - name: 上传 artifact（整体）
-        if: hashFiles('parts/*') == ''
+        if: always() && hashFiles('parts/*') == ''
         uses: actions/upload-artifact@v4
         with:
           name: bt-files
@@ -172,7 +198,7 @@ jobs:
           retention-days: 7
 
       - name: 上传分卷 z01
-        if: hashFiles('parts/bt.z01')
+        if: always() && hashFiles('parts/bt.z01')
         uses: actions/upload-artifact@v4
         with:
           name: bt-part1
@@ -180,7 +206,7 @@ jobs:
           retention-days: 7
 
       - name: 上传分卷 z02
-        if: hashFiles('parts/bt.z02')
+        if: always() && hashFiles('parts/bt.z02')
         uses: actions/upload-artifact@v4
         with:
           name: bt-part2
@@ -188,7 +214,7 @@ jobs:
           retention-days: 7
 
       - name: 上传分卷 z03
-        if: hashFiles('parts/bt.z03')
+        if: always() && hashFiles('parts/bt.z03')
         uses: actions/upload-artifact@v4
         with:
           name: bt-part3
@@ -196,7 +222,7 @@ jobs:
           retention-days: 7
 
       - name: 上传分卷 zip
-        if: hashFiles('parts/bt.zip')
+        if: always() && hashFiles('parts/bt.zip')
         uses: actions/upload-artifact@v4
         with:
           name: bt-partZ
