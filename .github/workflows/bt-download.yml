@@ -19,7 +19,7 @@ env:
 jobs:
   download:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 100
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
@@ -80,13 +80,13 @@ jobs:
         run: |
           set +e
           mkdir -p out
-          TRACKERS="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,udp://tracker.openbittorrent.com:6969/announce,udp://exodus.desync.com:6969/announce,udp://tracker.torrent.eu.org:451/announce,http://tracker.opentrackr.org:1337/announce,https://tracker.gbitt.info:443/announce,http://tracker.gbitt.info:80/announce"
+          TRACKERS="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,udp://tracker.openbittorrent.com:6969/announce,udp://exodus.desync.com:6969/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.moeking.me:6969/announce,udp://tracker.tiny-vps.com:6969/announce,udp://open.stealth.si:80/announce,udp://tracker.dler.org:6969/announce,udp://explodie.org:6969/announce,udp://tracker.tamersunion.org:6969/announce,http://tracker.opentrackr.org:1337/announce,https://tracker.gbitt.info:443/announce,http://tracker.gbitt.info:80/announce,http://sukebei.tracker.wf:8888/announce"
           i=1
           for mag in "$INPUT_MAGNET1" "$INPUT_MAGNET2"; do
             [ -z "$mag" ] && continue
             mkdir -p out/task$i
             echo "=== 任务$i 开始: ${mag:0:60} ==="
-            timeout 150 aria2c --dir=out/task$i               --enable-dht=false --enable-peer-exchange=false --bt-enable-lpd=false               --bt-tracker="$TRACKERS"               --max-connection-per-server=8 --split=8 --bt-max-peers=50               --seed-time=0 --bt-save-metadata=true               --console-log-level=error --summary-interval=0               "$mag"
+            timeout 870 aria2c --dir=out/task$i               --enable-dht=true --enable-peer-exchange=true --bt-enable-lpd=true               --dht-entry-point=router.bittorrent.com:6881               --dht-entry-point=dht.transmissionbt.com:6881               --dht-entry-point=router.bitcomet.com:6881               --bt-tracker="$TRACKERS"               --max-connection-per-server=16 --split=16 --bt-max-peers=100               --bt-request-peer-speed-limit=0 --seed-time=0 --bt-save-metadata=true               --file-allocation=none --allow-overwrite=true --auto-file-renaming=false               --console-log-level=error --summary-interval=0               "$mag"
             echo "任务$i aria2退出码: $? (124=超时)"
             du -sh out/task$i 2>/dev/null
             i=$((i+1))
