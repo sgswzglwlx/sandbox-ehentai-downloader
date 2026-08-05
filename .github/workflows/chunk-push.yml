@@ -1,4 +1,4 @@
-name: 分卷推送v2 (jsDelivr 加速, 防缓存)
+name: 分卷推送v3 (jsDelivr 加速, 防缓存+历史重置)
 
 on:
   workflow_dispatch:
@@ -35,11 +35,9 @@ jobs:
           TS=$(date +%s)
           cd parts
           split -b 18m ../work/bt.zip "${TS}-"
-          ls -la | head -60
           echo "分卷数: $(ls | wc -l)"
-          ls > ../chunk-list.txt
 
-      - name: 推送分卷到 chunk-host
+      - name: 推送分卷到 chunk-host (重置历史)
         env:
           GH_TOKEN: ${{ secrets.MY_PAT }}
         run: |
@@ -47,12 +45,16 @@ jobs:
           cd /tmp/ch
           git config user.name "chunk-bot"
           git config user.email "chunk-bot@users.noreply.github.com"
+          # 重置历史：只保留一个孤儿提交
+          git checkout --orphan tmp-branch 2>/dev/null || true
+          git rm -rf --cached . > /dev/null 2>&1 || true
           rm -rf chunks
           mkdir -p chunks
           cp $GITHUB_WORKSPACE/parts/* chunks/
-          cp $GITHUB_WORKSPACE/chunk-list.txt chunks/INDEX.txt
+          ls chunks/ | head -3
           echo "分卷数: $(ls chunks | wc -l)"
           git add -A
-          git commit -m "chunks $(date +%s)" || echo "无变更"
-          git push origin main || git push -u origin main
-          echo "✅ push 完成"
+          git -c user.name="chunk-bot" -c user.email="chunk-bot@users.noreply.github.com" commit -m "chunks $(date +%s)" || echo "无变更"
+          git branch -M main
+          git push -f origin main
+          echo "✅ push 完成（历史已重置）"
