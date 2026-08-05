@@ -1,0 +1,62 @@
+name: 分卷推送 (jsDelivr 加速)
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: 'artifact ID'
+        required: true
+        type: string
+
+env:
+  ART_ID: ${{ github.event.inputs.artifact_id }}
+
+jobs:
+  chunk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 下载 artifact
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          mkdir -p work
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            -o work/bt.zip \
+            "https://api.github.com/repos/sgswzglwlx/sandbox-ehentai-downloader/actions/artifacts/$ART_ID/zip"
+          ls -la work/
+          echo "size: $(stat -c%s work/bt.zip)"
+
+      - name: 拆分分卷
+        run: |
+          mkdir -p parts
+          cd parts
+          split -b 18m ../work/bt.zip part-
+          ls -la | head -40
+          echo "分卷数: $(ls | wc -l)"
+
+      - name: 推送分卷到 chunk-host
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          git clone https://x-access-token:${GH_TOKEN}@github.com/sgswzglwlx/chunk-host.git /tmp/ch
+          cd /tmp/ch
+          git config user.name "chunk-bot"
+          git config user.email "chunk-bot@users.noreply.github.com"
+          rm -rf chunks
+          mkdir -p chunks
+          cp /workspace/parts/* chunks/ 2>/dev/null || cp $GITHUB_WORKSPACE/parts/* chunks/
+          ls chunks/ | head
+          echo "分卷数: $(ls chunks | wc -l)"
+          git add -A
+          git commit -m "chunks $(date +%s)" || echo "无变更"
+          git push origin main || git push -u origin main
+          echo "✅ push 完成"
+
+      - name: 输出分卷清单
+        run: |
+          ls /workspace/parts/ > chunk-list.txt 2>/dev/null || ls $GITHUB_WORKSPACE/parts/ > chunk-list.txt
+          cat chunk-list.txt
