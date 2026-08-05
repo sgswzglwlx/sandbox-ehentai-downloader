@@ -1,0 +1,71 @@
+name: artifact转Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_ids:
+        description: 'artifact ID 列表（逗号分隔）'
+        required: true
+        type: string
+
+env:
+  INPUT_IDS: ${{ github.event.inputs.artifact_ids }}
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 下载并上传 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work
+          python3 - << 'PYEOF'
+          import os, json, subprocess, urllib.request
+
+          ids = [x.strip() for x in os.environ['INPUT_IDS'].split(',') if x.strip()]
+          # 获取 artifact 名称
+          for aid in ids:
+              try:
+                  req = urllib.request.Request(
+                      f'https://api.github.com/repos/{os.environ["GITHUB_REPOSITORY"]}/actions/artifacts/{aid}',
+                      headers={'Authorization': f'token {os.environ["GH_TOKEN"]}',
+                               'Accept': 'application/vnd.github.v3+json'})
+                  info = json.loads(urllib.request.urlopen(req, timeout=30).read())
+                  name = info['name']
+                  size = info['size_in_bytes']
+                  print(f'处理 {name} ({size/1048576:.0f}MB) ...')
+                  # 下载 artifact（用 gh api 下载）
+                  r = subprocess.run(
+                      ['gh', 'api', f'/repos/{os.environ["GITHUB_REPOSITORY"]}/actions/artifacts/{aid}/zip',
+                       '--jq', '.', '-o', f'work/{name}.zip'],
+                      capture_output=True, text=True, timeout=120)
+                  if os.path.exists(f'work/{name}.zip') and os.path.getsize(f'work/{name}.zip') > 0:
+                      sz = os.path.getsize(f'work/{name}.zip')
+                      print(f'  下载完成 {sz/1048576:.0f}MB, 上传 Release...')
+                      r2 = subprocess.run(
+                          ['gh', 'release', 'upload', 'r34-videos', f'work/{name}.zip',
+                           '--repo', os.environ['GITHUB_REPOSITORY'], '--clobber'],
+                          capture_output=True, text=True, timeout=600)
+                      if r2.returncode == 0:
+                          print(f'  ✔ {name} -> Release')
+                      else:
+                          print(f'  ✘ 上传失败: {r2.stderr[-300:]}')
+                  else:
+                      print(f'  ✘ 下载失败: {r.stderr[-200:]}')
+              except Exception as e:
+                  print(f'  ✘ {aid} 错误: {e}')
+          PYEOF
+
+      - name: 验证
+        run: |
+          gh release view r34-videos --repo ${{ github.repository }} --json assets --jq '.assets[].name' 2>/dev/null || true
