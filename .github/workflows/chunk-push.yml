@@ -1,4 +1,4 @@
-name: 分卷推送 (jsDelivr 加速)
+name: 分卷推送v2 (jsDelivr 加速, 防缓存)
 
 on:
   workflow_dispatch:
@@ -27,16 +27,17 @@ jobs:
           curl -sL -H "Authorization: token $GH_TOKEN" \
             -o work/bt.zip \
             "https://api.github.com/repos/sgswzglwlx/sandbox-ehentai-downloader/actions/artifacts/$ART_ID/zip"
-          ls -la work/
           echo "size: $(stat -c%s work/bt.zip)"
 
-      - name: 拆分分卷
+      - name: 拆分分卷(带时间戳前缀)
         run: |
           mkdir -p parts
+          TS=$(date +%s)
           cd parts
-          split -b 18m ../work/bt.zip part-
-          ls -la | head -40
+          split -b 18m ../work/bt.zip "${TS}-"
+          ls -la | head -60
           echo "分卷数: $(ls | wc -l)"
+          ls > ../chunk-list.txt
 
       - name: 推送分卷到 chunk-host
         env:
@@ -48,15 +49,10 @@ jobs:
           git config user.email "chunk-bot@users.noreply.github.com"
           rm -rf chunks
           mkdir -p chunks
-          cp /workspace/parts/* chunks/ 2>/dev/null || cp $GITHUB_WORKSPACE/parts/* chunks/
-          ls chunks/ | head
+          cp $GITHUB_WORKSPACE/parts/* chunks/
+          cp $GITHUB_WORKSPACE/chunk-list.txt chunks/INDEX.txt
           echo "分卷数: $(ls chunks | wc -l)"
           git add -A
           git commit -m "chunks $(date +%s)" || echo "无变更"
           git push origin main || git push -u origin main
           echo "✅ push 完成"
-
-      - name: 输出分卷清单
-        run: |
-          ls /workspace/parts/ > chunk-list.txt 2>/dev/null || ls $GITHUB_WORKSPACE/parts/ > chunk-list.txt
-          cat chunk-list.txt
