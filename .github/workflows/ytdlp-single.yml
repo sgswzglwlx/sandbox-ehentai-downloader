@@ -26,18 +26,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 安装 yt-dlp
-        run: pip install -q -U yt-dlp
+        run: pip install -q -U "yt-dlp[default,curl-cffi]"
 
       - name: 下载视频
         run: |
           mkdir -p out
           QUALITY="${{ github.event.inputs.quality }}"
           if [ "$QUALITY" = "480" ]; then
-            yt-dlp -S "res:480" -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+            yt-dlp --impersonate chrome -S "res:480" -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp --impersonate chrome -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
           elif [ "$QUALITY" = "720" ]; then
-            yt-dlp -S "res:720" -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+            yt-dlp -S "res:720" -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp --impersonate chrome -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
           else
-            yt-dlp -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp -f 'bestvideo+bestaudio' --merge-output-format mp4 -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
+            yt-dlp --impersonate chrome -f 'best' -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}" || yt-dlp --impersonate chrome -f 'bestvideo+bestaudio' --merge-output-format mp4 -o "out/${INPUT_NAME}.%(ext)s" --no-part "${INPUT_URL}"
           fi
           echo "---" 
           ls -la out/
@@ -48,3 +48,4 @@ jobs:
           name: video_${{ github.event.inputs.name }}
           path: out/
           retention-days: 7
+
