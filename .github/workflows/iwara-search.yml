@@ -25,63 +25,52 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 安装依赖
-        run: pip install -q -U yt-dlp
+        run: pip install -q -U yt-dlp playwright && npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true
 
-      - name: 用 yt-dlp 搜索 iwara
+      - name: Playwright 渲染 iwara 搜索页
         run: |
           mkdir -p out
           cat > search.py << 'PYEOF'
-          import os, json, subprocess, re
+          import os, json, re
+          from playwright.sync_api import sync_playwright
 
           query = os.environ['INPUT_QUERY']
           max_results = int(os.environ.get('INPUT_MAX', '10'))
 
-          # 方法1: yt-dlp flat-playlist 搜索 iwara（利用其内置支持）
-          # iwara 搜索 URL: https://www.iwara.tv/videos?query=xxx
-          search_url = f'https://www.iwara.tv/videos?query={query}'
           results = []
-          try:
-              r = subprocess.run(
-                  ['yt-dlp', '--flat-playlist', '-J', '--playlist-end', str(max_results), search_url],
-                  capture_output=True, text=True, timeout=90)
-              if r.returncode == 0 and r.stdout.strip():
-                  data = json.loads(r.stdout)
-                  entries = data.get('entries', [])
-                  for e in entries:
-                      if not e: continue
-                      vid = e.get('id', '')
-                      title = e.get('title', '')
-                      url = f'https://www.iwara.tv/video/{vid}' if vid else ''
-                      # 时长（flat 模式可能没有）
-                      dur = e.get('duration', None)
-                      results.append({'id': vid, 'title': title, 'url': url, 'duration': dur})
-                  print(f'[yt-dlp] 找到 {len(results)} 个视频')
-          except Exception as e:
-              print(f'[yt-dlp] 搜索失败: {e}')
-
-          # 方法2: 降级用 HTML 正则
-          if not results:
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+              page = browser.new_page(user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
+              url = f'https://www.iwara.tv/videos?query={query}'
               try:
-                  import urllib.request
-                  html = urllib.request.urlopen(
-                      urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0'}), timeout=30).read().decode()
-                  vids = re.findall(r'/video/([a-zA-Z0-9]+)(?:/[^"]*)?', html)
+                  page.goto(url, timeout=45000, wait_until='networkidle')
+                  page.wait_for_timeout(3000)
+                  # 提取视频卡片链接
+                  links = page.eval_on_selector_all('a[href*="/video/"]', 'els => els.map(e => e.href)')
                   seen = set()
-                  for v in vids:
-                      if v not in seen:
-                          seen.add(v)
-                          results.append({'id': v, 'title': f'iwara_{v}', 'url': f'https://www.iwara.tv/video/{v}', 'duration': None})
-                  print(f'[HTML] 降级找到 {len(results)} 个视频')
+                  for l in links:
+                      m = re.search(r'/video/([a-zA-Z0-9]+)', l)
+                      if m and m.group(1) not in seen:
+                          seen.add(m.group(1))
+                          results.append({'id': m.group(1), 'url': l.split('?')[0]})
+                  # 提取标题
+                  titles = page.eval_on_selector_all('.video-title, .title, h4, h3', 'els => els.map(e => e.textContent.trim())')
+                  for i, t in enumerate(titles[:len(results)]):
+                      results[i]['title'] = t[:60]
               except Exception as e:
-                  print(f'[HTML] 降级失败: {e}')
+                  print(f'渲染失败: {e}')
+              browser.close()
+
+          # 兜底标题
+          for r in results:
+              r.setdefault('title', f'iwara_{r["id"]}')
 
           print(f'共 {len(results)} 个视频:')
-          for r in results:
-              dur_s = f" ({r['duration']}s)" if r.get('duration') else ''
-              print(f"  {r['id']} | {r['title'][:50]}{dur_s} | {r['url']}")
+          for r in results[:max_results]:
+              print(f"  {r['id']} | {r['title'][:50]} | {r['url']}")
 
           with open('out/iwara_results.json', 'w') as f:
-              json.dump(results, f, ensure_ascii=False, indent=2)
+              json.dump(results[:max_results], f, ensure_ascii=False, indent=2)
           PYEOF
           python3 search.py
 
