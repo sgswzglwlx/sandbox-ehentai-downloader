@@ -24,46 +24,58 @@ jobs:
       - name: 检出
         uses: actions/checkout@v4
 
-      - name: 安装依赖
-        run: pip install -q -U yt-dlp playwright && npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true
+      - name: 安装依赖（含 impersonation 支持）
+        run: pip install -q -U "yt-dlp[default,curl-cffi]" playwright && (npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true)
 
       - name: Playwright 渲染 iwara 搜索页
         run: |
           mkdir -p out
           cat > search.py << 'PYEOF'
-          import os, json, re
+          import os, json, re, subprocess
           from playwright.sync_api import sync_playwright
 
           query = os.environ['INPUT_QUERY']
           max_results = int(os.environ.get('INPUT_MAX', '10'))
-
           results = []
-          with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
-              page = browser.new_page(user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
-              url = f'https://www.iwara.tv/videos?query={query}'
-              try:
-                  page.goto(url, timeout=45000, wait_until='networkidle')
-                  page.wait_for_timeout(3000)
-                  # 提取视频卡片链接
-                  links = page.eval_on_selector_all('a[href*="/video/"]', 'els => els.map(e => e.href)')
-                  seen = set()
-                  for l in links:
-                      m = re.search(r'/video/([a-zA-Z0-9]+)', l)
-                      if m and m.group(1) not in seen:
-                          seen.add(m.group(1))
-                          results.append({'id': m.group(1), 'url': l.split('?')[0]})
-                  # 提取标题
-                  titles = page.eval_on_selector_all('.video-title, .title, h4, h3', 'els => els.map(e => e.textContent.trim())')
-                  for i, t in enumerate(titles[:len(results)]):
-                      results[i]['title'] = t[:60]
-              except Exception as e:
-                  print(f'渲染失败: {e}')
-              browser.close()
 
-          # 兜底标题
-          for r in results:
-              r.setdefault('title', f'iwara_{r["id"]}')
+          # 方法1: yt-dlp 直接搜索（curl-cffi impersonation）
+          try:
+              r = subprocess.run(
+                  ['yt-dlp', '--flat-playlist', '-J', '--playlist-end', str(max_results),
+                   f'https://www.iwara.tv/videos?query={query}'],
+                  capture_output=True, text=True, timeout=90)
+              if r.returncode == 0 and r.stdout.strip():
+                  data = json.loads(r.stdout)
+                  for e in data.get('entries', []):
+                      if not e: continue
+                      vid = e.get('id','')
+                      results.append({
+                          'id': vid, 'title': e.get('title', f'iwara_{vid}')[:60],
+                          'url': f'https://www.iwara.tv/video/{vid}', 'duration': e.get('duration')
+                      })
+                  print(f'[yt-dlp+impersonation] 找到 {len(results)} 个')
+          except Exception as e:
+              print(f'[yt-dlp] 失败: {e}')
+
+          # 方法2: Playwright 渲染兜底
+          if not results:
+              with sync_playwright() as p:
+                  browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+                  page = browser.new_page(user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
+                  try:
+                      page.goto(f'https://www.iwara.tv/videos?query={query}', timeout=45000, wait_until='networkidle')
+                      page.wait_for_timeout(3000)
+                      links = page.eval_on_selector_all('a[href*="/video/"]', 'els => els.map(e => e.href)')
+                      seen = set()
+                      for l in links:
+                          m = re.search(r'/video/([a-zA-Z0-9]+)', l)
+                          if m and m.group(1) not in seen:
+                              seen.add(m.group(1))
+                              results.append({'id': m.group(1), 'title': f'iwara_{m.group(1)}', 'url': f'https://www.iwara.tv/video/{m.group(1)}', 'duration': None})
+                      print(f'[Playwright] 找到 {len(results)} 个')
+                  except Exception as e:
+                      print(f'[Playwright] 失败: {e}')
+                  browser.close()
 
           print(f'共 {len(results)} 个视频:')
           for r in results[:max_results]:
