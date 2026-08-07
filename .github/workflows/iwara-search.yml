@@ -25,56 +25,60 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 安装依赖
-        run: pip install -q -U yt-dlp requests
+        run: pip install -q -U yt-dlp
 
-      - name: 搜索 iwara
+      - name: 用 yt-dlp 搜索 iwara
         run: |
           mkdir -p out
           cat > search.py << 'PYEOF'
-          import os, json, re
-          import urllib.request, urllib.parse
+          import os, json, subprocess, re
 
           query = os.environ['INPUT_QUERY']
           max_results = int(os.environ.get('INPUT_MAX', '10'))
 
-          # iwara 搜索 API（匿名可用）
-          url = f'https://www.iwara.tv/api/videos?query={urllib.parse.quote(query)}&sort=date&duration=any&page=1&limit={max_results}'
-          req = urllib.request.Request(url, headers={
-              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0',
-              'Accept': 'application/json',
-          })
-          try:
-              data = json.loads(urllib.request.urlopen(req, timeout=30).read())
-          except Exception as e:
-              print(f'搜索失败: {e}')
-              # 降级：解析 HTML
-              html_url = f'https://www.iwara.tv/videos?query={urllib.parse.quote(query)}'
-              try:
-                  html = urllib.request.urlopen(urllib.request.Request(html_url, headers={'User-Agent': 'Mozilla/5.0'}), timeout=30).read().decode()
-                  vids = re.findall(r'/video/([a-zA-Z0-9]+)/[^"]*"', html)
-                  data = [{'id': v, 'title': f'iwara_{v}'} for v in dict.fromkeys(vids)]
-              except Exception as e2:
-                  print(f'HTML降级也失败: {e2}')
-                  data = []
-
+          # 方法1: yt-dlp flat-playlist 搜索 iwara（利用其内置支持）
+          # iwara 搜索 URL: https://www.iwara.tv/videos?query=xxx
+          search_url = f'https://www.iwara.tv/videos?query={query}'
           results = []
-          if isinstance(data, list):
-              for v in data[:max_results]:
-                  vid = v.get('id', '')
-                  title = v.get('title', '')
-                  url_v = f'https://www.iwara.tv/video/{vid}' if vid else ''
-                  results.append({'id': vid, 'title': title, 'url': url_v})
-          elif isinstance(data, dict):
-              items = data.get('results', data.get('data', []))
-              for v in items[:max_results]:
-                  vid = v.get('id', '')
-                  title = v.get('title', '')
-                  url_v = f'https://www.iwara.tv/video/{vid}' if vid else ''
-                  results.append({'id': vid, 'title': title, 'url': url_v})
+          try:
+              r = subprocess.run(
+                  ['yt-dlp', '--flat-playlist', '-J', '--playlist-end', str(max_results), search_url],
+                  capture_output=True, text=True, timeout=90)
+              if r.returncode == 0 and r.stdout.strip():
+                  data = json.loads(r.stdout)
+                  entries = data.get('entries', [])
+                  for e in entries:
+                      if not e: continue
+                      vid = e.get('id', '')
+                      title = e.get('title', '')
+                      url = f'https://www.iwara.tv/video/{vid}' if vid else ''
+                      # 时长（flat 模式可能没有）
+                      dur = e.get('duration', None)
+                      results.append({'id': vid, 'title': title, 'url': url, 'duration': dur})
+                  print(f'[yt-dlp] 找到 {len(results)} 个视频')
+          except Exception as e:
+              print(f'[yt-dlp] 搜索失败: {e}')
 
-          print(f'找到 {len(results)} 个视频:')
+          # 方法2: 降级用 HTML 正则
+          if not results:
+              try:
+                  import urllib.request
+                  html = urllib.request.urlopen(
+                      urllib.request.Request(search_url, headers={'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0'}), timeout=30).read().decode()
+                  vids = re.findall(r'/video/([a-zA-Z0-9]+)(?:/[^"]*)?', html)
+                  seen = set()
+                  for v in vids:
+                      if v not in seen:
+                          seen.add(v)
+                          results.append({'id': v, 'title': f'iwara_{v}', 'url': f'https://www.iwara.tv/video/{v}', 'duration': None})
+                  print(f'[HTML] 降级找到 {len(results)} 个视频')
+              except Exception as e:
+                  print(f'[HTML] 降级失败: {e}')
+
+          print(f'共 {len(results)} 个视频:')
           for r in results:
-              print(f"  {r['id']} | {r['title'][:50]} | {r['url']}")
+              dur_s = f" ({r['duration']}s)" if r.get('duration') else ''
+              print(f"  {r['id']} | {r['title'][:50]}{dur_s} | {r['url']}")
 
           with open('out/iwara_results.json', 'w') as f:
               json.dump(results, f, ensure_ascii=False, indent=2)
