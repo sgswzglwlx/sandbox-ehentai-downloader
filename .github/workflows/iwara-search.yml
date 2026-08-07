@@ -1,0 +1,89 @@
+name: iwara 搜索下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: '搜索关键词（角色名）'
+        required: true
+        type: string
+      max_results:
+        description: '最大结果数'
+        required: false
+        type: string
+        default: '10'
+
+env:
+  INPUT_QUERY: ${{ github.event.inputs.query }}
+  INPUT_MAX: ${{ github.event.inputs.max_results }}
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        run: pip install -q -U yt-dlp requests
+
+      - name: 搜索 iwara
+        run: |
+          mkdir -p out
+          cat > search.py << 'PYEOF'
+          import os, json, re
+          import urllib.request, urllib.parse
+
+          query = os.environ['INPUT_QUERY']
+          max_results = int(os.environ.get('INPUT_MAX', '10'))
+
+          # iwara 搜索 API（匿名可用）
+          url = f'https://www.iwara.tv/api/videos?query={urllib.parse.quote(query)}&sort=date&duration=any&page=1&limit={max_results}'
+          req = urllib.request.Request(url, headers={
+              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0',
+              'Accept': 'application/json',
+          })
+          try:
+              data = json.loads(urllib.request.urlopen(req, timeout=30).read())
+          except Exception as e:
+              print(f'搜索失败: {e}')
+              # 降级：解析 HTML
+              html_url = f'https://www.iwara.tv/videos?query={urllib.parse.quote(query)}'
+              try:
+                  html = urllib.request.urlopen(urllib.request.Request(html_url, headers={'User-Agent': 'Mozilla/5.0'}), timeout=30).read().decode()
+                  vids = re.findall(r'/video/([a-zA-Z0-9]+)/[^"]*"', html)
+                  data = [{'id': v, 'title': f'iwara_{v}'} for v in dict.fromkeys(vids)]
+              except Exception as e2:
+                  print(f'HTML降级也失败: {e2}')
+                  data = []
+
+          results = []
+          if isinstance(data, list):
+              for v in data[:max_results]:
+                  vid = v.get('id', '')
+                  title = v.get('title', '')
+                  url_v = f'https://www.iwara.tv/video/{vid}' if vid else ''
+                  results.append({'id': vid, 'title': title, 'url': url_v})
+          elif isinstance(data, dict):
+              items = data.get('results', data.get('data', []))
+              for v in items[:max_results]:
+                  vid = v.get('id', '')
+                  title = v.get('title', '')
+                  url_v = f'https://www.iwara.tv/video/{vid}' if vid else ''
+                  results.append({'id': vid, 'title': title, 'url': url_v})
+
+          print(f'找到 {len(results)} 个视频:')
+          for r in results:
+              print(f"  {r['id']} | {r['title'][:50]} | {r['url']}")
+
+          with open('out/iwara_results.json', 'w') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+          PYEOF
+          python3 search.py
+
+      - name: 上传结果
+        uses: actions/upload-artifact@v4
+        with:
+          name: iwara-results
+          path: out/
+          retention-days: 7
