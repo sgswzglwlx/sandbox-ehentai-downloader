@@ -1,0 +1,44 @@
+name: iwara 元数据解析
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'iwara 视频URL'
+        required: true
+        type: string
+
+env:
+  INPUT_URL: ${{ github.event.inputs.url }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装依赖
+        run: pip install -q -U "yt-dlp[default,curl-cffi]"
+
+      - name: 解析元数据
+        run: |
+          mkdir -p out
+          yt-dlp --impersonate chrome -J "${{ github.event.inputs.url }}" > out/meta.json 2>out/err.log || true
+          python3 -c "
+import json
+try:
+    d = json.load(open('out/meta.json'))
+    print(f\"标题: {d.get('title')}\")
+    print(f\"时长: {d.get('duration')}秒 ({d.get('duration',0)//60}分{d.get('duration',0)%60}秒)\")
+    print(f\"上传者: {d.get('uploader')}\")
+    print(f\"标签: {d.get('tags', [])[:10]}\")
+    print(f\"分辨率: {d.get('width')}x{d.get('height')}\")
+    print(f\"URL: {d.get('webpage_url')}\")
+except Exception as e:
+    print('解析失败:', e)
+    print(open('out/err.log').read()[-300:])
+"
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: iwara-meta
+          path: out/
+          retention-days: 7
