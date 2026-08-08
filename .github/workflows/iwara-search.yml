@@ -11,7 +11,7 @@ on:
         description: '最大结果数'
         required: false
         type: string
-        default: '10'
+        default: '15'
 
 env:
   INPUT_QUERY: ${{ github.event.inputs.query }}
@@ -24,47 +24,69 @@ jobs:
       - name: 检出
         uses: actions/checkout@v4
 
-      - name: 安装依赖（含 impersonation 支持）
+      - name: 安装依赖
         run: pip install -q -U "yt-dlp[default,curl-cffi]" playwright && (npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true)
 
-      - name: Playwright 渲染 iwara 搜索页
+      - name: Playwright 渲染 iwara 搜索页（提取标题+时长）
         run: |
           mkdir -p out
           cat > search.py << 'PYEOF'
-          import os, json, re, subprocess
+          import os, json, re
           from playwright.sync_api import sync_playwright
 
           query = os.environ['INPUT_QUERY']
-          max_results = int(os.environ.get('INPUT_MAX', '10'))
+          max_results = int(os.environ.get('INPUT_MAX', '15'))
           results = []
 
-          # 方法1: yt-dlp 直接搜索（curl-cffi impersonation）
-          try:
-              r = subprocess.run(
-                  ['yt-dlp', '--flat-playlist', '-J', '--playlist-end', str(max_results),
-                   f'https://www.iwara.tv/videos?query={query}'],
-                  capture_output=True, text=True, timeout=90)
-              if r.returncode == 0 and r.stdout.strip():
-                  data = json.loads(r.stdout)
-                  for e in data.get('entries', []):
-                      if not e: continue
-                      vid = e.get('id','')
-                      results.append({
-                          'id': vid, 'title': e.get('title', f'iwara_{vid}')[:60],
-                          'url': f'https://www.iwara.tv/video/{vid}', 'duration': e.get('duration')
-                      })
-                  print(f'[yt-dlp+impersonation] 找到 {len(results)} 个')
-          except Exception as e:
-              print(f'[yt-dlp] 失败: {e}')
-
-          # 方法2: Playwright 渲染兜底
-          if not results:
-              with sync_playwright() as p:
-                  browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
-                  page = browser.new_page(user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
+              page = browser.new_page(user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
+              try:
+                  page.goto(f'https://www.iwara.tv/videos?query={query}', timeout=45000, wait_until='networkidle')
+                  page.wait_for_timeout(4000)
+                  # 方法A: 从页面 JS 变量或 __NEXT_DATA__ 提取
+                  data = None
                   try:
-                      page.goto(f'https://www.iwara.tv/videos?query={query}', timeout=45000, wait_until='networkidle')
-                      page.wait_for_timeout(3000)
+                      data = page.evaluate("() => { const el = document.getElementById('__NEXT_DATA__'); return el ? el.textContent : null }")
+                  except: pass
+                  if data:
+                      try:
+                          jd = json.loads(data)
+                          # 遍历找视频数据
+                          def find_videos(obj, acc):
+                              if isinstance(obj, dict):
+                                  if 'video' in obj and isinstance(obj.get('video'), dict):
+                                      v = obj['video']
+                                      if 'id' in v:
+                                          acc.append(v)
+                                  for val in obj.values():
+                                      find_videos(val, acc)
+                              elif isinstance(obj, list):
+                                  for val in obj:
+                                      find_videos(val, acc)
+                          acc = []
+                          find_videos(jd, acc)
+                          for v in acc[:max_results]:
+                              vid = v.get('id','')
+                              title = v.get('title', v.get('name', f'iwara_{vid}'))
+                              results.append({'id': vid, 'title': str(title)[:60], 'url': f'https://www.iwara.tv/video/{vid}', 'duration': v.get('duration')})
+                          print(f'[NEXT_DATA] 找到 {len(results)} 个')
+                      except Exception as e:
+                          print(f'[NEXT_DATA] 解析失败: {e}')
+                  # 方法B: 视频卡片标题选择器（兜底）
+                  if not results:
+                      cards = page.query_selector_all('.video-card, [class*="video"] a[href*="/video/"]')
+                      seen = set()
+                      for card in cards:
+                          href = card.get_attribute('href') or ''
+                          m = re.search(r'/video/([a-zA-Z0-9]+)', href)
+                          if m and m.group(1) not in seen:
+                              seen.add(m.group(1))
+                              title = card.get_attribute('title') or card.text_content() or f'iwara_{m.group(1)}'
+                              results.append({'id': m.group(1), 'title': title.strip()[:60], 'url': f'https://www.iwara.tv/video/{m.group(1)}', 'duration': None})
+                      print(f'[CARDS] 找到 {len(results)} 个')
+                  # 方法C: 通用链接兜底
+                  if not results:
                       links = page.eval_on_selector_all('a[href*="/video/"]', 'els => els.map(e => e.href)')
                       seen = set()
                       for l in links:
@@ -72,14 +94,15 @@ jobs:
                           if m and m.group(1) not in seen:
                               seen.add(m.group(1))
                               results.append({'id': m.group(1), 'title': f'iwara_{m.group(1)}', 'url': f'https://www.iwara.tv/video/{m.group(1)}', 'duration': None})
-                      print(f'[Playwright] 找到 {len(results)} 个')
-                  except Exception as e:
-                      print(f'[Playwright] 失败: {e}')
-                  browser.close()
+                      print(f'[LINKS] 找到 {len(results)} 个')
+              except Exception as e:
+                  print(f'渲染失败: {e}')
+              browser.close()
 
           print(f'共 {len(results)} 个视频:')
           for r in results[:max_results]:
-              print(f"  {r['id']} | {r['title'][:50]} | {r['url']}")
+              dur_s = f" ({r['duration']}s)" if r.get('duration') else ''
+              print(f"  {r['id']} | {r['title'][:50]}{dur_s} | {r['url']}")
 
           with open('out/iwara_results.json', 'w') as f:
               json.dump(results[:max_results], f, ensure_ascii=False, indent=2)
