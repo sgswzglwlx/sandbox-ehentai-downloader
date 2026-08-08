@@ -16,9 +16,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 安装依赖
-        run: pip install -q playwright playwright-stealth && (npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true)
+        run: |
+          pip install -q playwright playwright-stealth
+          sudo apt-get update -qq && sudo apt-get install -y -qq xvfb 2>/dev/null || true
+          (npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true)
 
-      - name: 截图
+      - name: 截图（headed + xvfb + stealth 绕过 Cloudflare）
         run: |
           mkdir -p out
           cat > shot.py << 'PYEOF'
@@ -31,13 +34,17 @@ jobs:
               STEALTH = False
 
           urls = [u.strip() for u in os.environ['INPUT_URLS'].split('|') if u.strip()]
-          print(f'待截图 {len(urls)} 个页面, stealth={STEALTH}')
+          print(f'待截图 {len(urls)} 个页面, stealth={STEALTH}, headed=True')
 
           with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True, args=[
-                  '--no-sandbox', '--disable-blink-features=AutomationControlled'])
+              # headed 模式（非 headless）配合 xvfb-run 运行
+              browser = p.chromium.launch(headless=False, args=[
+                  '--no-sandbox', '--disable-blink-features=AutomationControlled',
+                  '--disable-gpu', '--window-size=1280,1000'])
               ctx = browser.new_context(viewport={'width': 1280, 'height': 1000},
-                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36')
+                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+                  locale='en-US', timezone_id='America/New_York',
+                  extra_http_headers={'Accept-Language': 'en-US,en;q=0.9'})
               page = ctx.new_page()
               if STEALTH:
                   Stealth().apply_stealth_sync(page)
@@ -47,6 +54,13 @@ jobs:
                   try:
                       page.goto(url, timeout=90000, wait_until='domcontentloaded')
                       page.wait_for_timeout(8000)
+                      # 等待 Cloudflare 自动通过（最多30秒）
+                      for _ in range(10):
+                          title = page.title()
+                          if 'Just a moment' not in title and 'security verification' not in title.lower():
+                              break
+                          page.wait_for_timeout(3000)
+                      # 点击成人内容确认
                       for text in ['I am 18 or older', 'Confirm', 'Agree', 'Enter', 'Continue', 'Proceed', '进入', '确认', '同意']:
                           try:
                               btn = page.get_by_role('button', name=re.compile(text, re.I))
@@ -65,6 +79,7 @@ jobs:
                               page.wait_for_timeout(4000)
                       except Exception:
                           pass
+                      # 滚动加载
                       for _ in range(3):
                           page.mouse.wheel(0, 700)
                           page.wait_for_timeout(1500)
@@ -78,7 +93,8 @@ jobs:
                           pass
               browser.close()
           PYEOF
-          python3 shot.py
+          # xvfb-run 跑 headed 浏览器
+          xvfb-run -a python3 shot.py
           ls -la out/
 
       - name: 上传截图
