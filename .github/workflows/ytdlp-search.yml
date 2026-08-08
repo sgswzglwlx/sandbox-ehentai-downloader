@@ -1,0 +1,91 @@
+name: 多平台搜索
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: '搜索关键词'
+        required: true
+        type: string
+      site:
+        description: '站点 eporner/xvideos/hqporner'
+        required: false
+        type: string
+        default: 'eporner'
+      max_results:
+        description: '最大结果数'
+        required: false
+        type: string
+        default: '10'
+
+env:
+  INPUT_QUERY: ${{ github.event.inputs.query }}
+  INPUT_SITE: ${{ github.event.inputs.site }}
+  INPUT_MAX: ${{ github.event.inputs.max_results }}
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装依赖
+        run: pip install -q -U "yt-dlp[default,curl-cffi]"
+
+      - name: yt-dlp 搜索
+        run: |
+          mkdir -p out
+          python3 << 'PYEOF'
+          import os, json, subprocess
+
+          query = os.environ['INPUT_QUERY']
+          site = os.environ['INPUT_SITE']
+          max_results = int(os.environ.get('INPUT_MAX', '10'))
+
+          # 各站点搜索 URL
+          urls = {
+              'eporner': f'https://www.eporner.com/search/{query}/',
+              'xvideos': f'https://www.xvideos.com/?k={query}',
+              'hqporner': f'https://hqporner.com/?q={query}',
+          }
+          url = urls.get(site, urls['eporner'])
+          print(f'搜索 {site}: {url}')
+
+          results = []
+          try:
+              r = subprocess.run(
+                  ['yt-dlp', '--flat-playlist', '-J', '--playlist-end', str(max_results), url],
+                  capture_output=True, text=True, timeout=90)
+              if r.returncode == 0 and r.stdout.strip():
+                  data = json.loads(r.stdout)
+                  for e in data.get('entries', []):
+                      if not e: continue
+                      results.append({
+                          'id': e.get('id',''),
+                          'title': e.get('title','')[:80],
+                          'url': e.get('url',''),
+                          'duration': e.get('duration'),
+                          'width': e.get('width'),
+                          'height': e.get('height'),
+                          'uploader': e.get('uploader'),
+                      })
+                  print(f'✔ 找到 {len(results)} 个')
+              else:
+                  print(f'⚠ 无结果, stderr: {r.stderr[-200:]}')
+          except Exception as e:
+              print(f'✘ 搜索失败: {e}')
+
+          print(f'共 {len(results)} 个视频:')
+          for r in results:
+              dur = f"{r['duration']//60}分{r['duration']%60}秒" if r.get('duration') else '?'
+              res = f"{r.get('width')}x{r.get('height')}" if r.get('width') else '?'
+              print(f"  {r['title'][:50]} | {dur} | {res} | {r['url'][:60]}")
+
+          with open('out/search_results.json', 'w') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+          PYEOF
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: search-results
+          path: out/
+          retention-days: 7
