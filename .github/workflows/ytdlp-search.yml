@@ -28,56 +28,76 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 安装依赖
-        run: pip install -q -U "yt-dlp[default,curl-cffi]"
+        run: pip install -q -U "yt-dlp[default,curl-cffi]" requests beautifulsoup4
 
-      - name: yt-dlp 搜索
+      - name: 多平台搜索
         run: |
           mkdir -p out
           python3 << 'PYEOF'
-          import os, json, subprocess
+          import os, json, subprocess, re, urllib.parse
+          import requests
+          from bs4 import BeautifulSoup
 
           query = os.environ['INPUT_QUERY']
           site = os.environ['INPUT_SITE']
           max_results = int(os.environ.get('INPUT_MAX', '10'))
-
-          # 各站点搜索 URL
-          urls = {
-              'eporner': f'https://www.eporner.com/search/{query}/',
-              'xvideos': f'https://www.xvideos.com/?k={query}',
-              'hqporner': f'https://hqporner.com/?q={query}',
-          }
-          url = urls.get(site, urls['eporner'])
-          print(f'搜索 {site}: {url}')
+          q = urllib.parse.quote(query)
 
           results = []
-          try:
-              r = subprocess.run(
-                  ['yt-dlp', '--flat-playlist', '-J', '--playlist-end', str(max_results), url],
-                  capture_output=True, text=True, timeout=90)
-              if r.returncode == 0 and r.stdout.strip():
-                  data = json.loads(r.stdout)
-                  for e in data.get('entries', []):
-                      if not e: continue
-                      results.append({
-                          'id': e.get('id',''),
-                          'title': e.get('title','')[:80],
-                          'url': e.get('url',''),
-                          'duration': e.get('duration'),
-                          'width': e.get('width'),
-                          'height': e.get('height'),
-                          'uploader': e.get('uploader'),
-                      })
-                  print(f'✔ 找到 {len(results)} 个')
-              else:
-                  print(f'⚠ 无结果, stderr: {r.stderr[-200:]}')
-          except Exception as e:
-              print(f'✘ 搜索失败: {e}')
+          headers = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36'}
+
+          if site == 'eporner':
+              url = f'https://www.eporner.com/search/{q}/'
+              try:
+                  r = requests.get(url, headers=headers, timeout=30)
+                  soup = BeautifulSoup(r.text, 'html.parser')
+                  for a in soup.select('a[href*="/hd-porn/"]')[:max_results]:
+                      href = a['href']
+                      vid_id = href.split('/')[-2] if href.endswith('/') else href.split('/')[-1]
+                      title = a.get('title') or a.text.strip()
+                      results.append({'id': vid_id, 'title': title[:80], 'url': f'https://www.eporner.com{href}'})
+                  # 时长在卡片里
+                  durs = soup.select('.mbtime')
+                  for i, d in enumerate(durs[:len(results)]):
+                      results[i]['duration_str'] = d.text.strip()
+                  print(f'eporner 找到 {len(results)} 个')
+              except Exception as e:
+                  print(f'eporner 失败: {e}')
+
+          elif site == 'xvideos':
+              url = f'https://www.xvideos.com/?k={q}'
+              try:
+                  r = requests.get(url, headers=headers, timeout=30)
+                  soup = BeautifulSoup(r.text, 'html.parser')
+                  for a in soup.select('a[href*="/video"]')[:max_results]:
+                      href = a['href']
+                      if not href.startswith('http'):
+                          href = 'https://www.xvideos.com' + href
+                      title = a.get('title') or a.text.strip()
+                      results.append({'id': href.split('/')[-1].split('_')[0], 'title': title[:80], 'url': href})
+                  print(f'xvideos 找到 {len(results)} 个')
+              except Exception as e:
+                  print(f'xvideos 失败: {e}')
+
+          elif site == 'hqporner':
+              url = f'https://hqporner.com/?q={q}'
+              try:
+                  r = requests.get(url, headers=headers, timeout=30)
+                  soup = BeautifulSoup(r.text, 'html.parser')
+                  for a in soup.select('a[href*="/vid/"]')[:max_results]:
+                      href = a['href']
+                      if not href.startswith('http'):
+                          href = 'https://hqporner.com' + href
+                      title = a.get('title') or a.text.strip()
+                      results.append({'id': href.split('/')[-2], 'title': title[:80], 'url': href})
+                  print(f'hqporner 找到 {len(results)} 个')
+              except Exception as e:
+                  print(f'hqporner 失败: {e}')
 
           print(f'共 {len(results)} 个视频:')
           for r in results:
-              dur = f"{r['duration']//60}分{r['duration']%60}秒" if r.get('duration') else '?'
-              res = f"{r.get('width')}x{r.get('height')}" if r.get('width') else '?'
-              print(f"  {r['title'][:50]} | {dur} | {res} | {r['url'][:60]}")
+              dur = r.get('duration_str', '?')
+              print(f"  {r['title'][:50]} | {dur} | {r['url'][:70]}")
 
           with open('out/search_results.json', 'w') as f:
               json.dump(results, f, ensure_ascii=False, indent=2)
