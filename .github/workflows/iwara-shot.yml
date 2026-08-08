@@ -18,11 +18,11 @@ jobs:
       - name: 安装依赖
         run: pip install -q playwright && (npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true)
 
-      - name: Playwright 截图
+      - name: Playwright 截图（自动确认成人内容）
         run: |
           mkdir -p out
           cat > shot.py << 'PYEOF'
-          import os, re
+          import os, re, time
           from playwright.sync_api import sync_playwright
 
           urls = [u.strip() for u in os.environ['INPUT_URLS'].split('|') if u.strip()]
@@ -30,25 +30,47 @@ jobs:
 
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True, args=['--no-sandbox'])
-              # 桌面视口
-              ctx = browser.new_context(viewport={'width': 1280, 'height': 900},
+              ctx = browser.new_context(viewport={'width': 1280, 'height': 1000},
                   user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36')
               page = ctx.new_page()
               for i, url in enumerate(urls):
                   vid = re.search(r'/video/([a-zA-Z0-9]+)', url)
                   name = vid.group(1) if vid else f'video_{i}'
                   try:
-                      page.goto(url, timeout=45000, wait_until='networkidle')
-                      page.wait_for_timeout(4000)
-                      # 滚动页面确保内容加载
-                      page.mouse.wheel(0, 600)
-                      page.wait_for_timeout(1500)
+                      page.goto(url, timeout=90000, wait_until='domcontentloaded')
+                      page.wait_for_timeout(5000)
+                      # 尝试点击成人内容确认按钮（多种可能的文案）
+                      for text in ['I am 18 or older', 'Confirm', 'Agree', 'Enter', '进入', '确认', '同意', 'Continue', 'Proceed']:
+                          try:
+                              btn = page.get_by_role('button', name=re.compile(text, re.I))
+                              if btn.count() > 0:
+                                  btn.first.click(timeout=5000)
+                                  print(f'  [{name}] 点击了确认按钮: {text}')
+                                  page.wait_for_timeout(3000)
+                                  break
+                          except Exception:
+                              pass
+                      # 也尝试点击链接形式的确认
+                      try:
+                          link = page.locator('a:has-text("I am 18 or older"), a:has-text("Confirm"), a:has-text("Enter"), a:has-text("Proceed")').first
+                          if link.count() > 0:
+                              link.click(timeout=5000)
+                              print(f'  [{name}] 点击了确认链接')
+                              page.wait_for_timeout(3000)
+                      except Exception:
+                          pass
+                      # 等待视频加载
+                      page.wait_for_timeout(5000)
+                      # 滚动页面
+                      page.mouse.wheel(0, 800)
+                      page.wait_for_timeout(2000)
+                      page.mouse.wheel(0, 800)
+                      page.wait_for_timeout(2000)
+                      # 截图
                       page.screenshot(path=f'out/{name}.png', full_page=False)
-                      # 提取标题
-                      title = page.title()
-                      print(f'✔ {name}: {title[:70]}')
+                      print(f'✔ {name}: {page.title()[:80]}')
                   except Exception as e:
-                      print(f'✘ {name}: {e}')
+                      print(f'✘ {name}: {type(e).__name__}: {str(e)[:80]}')
                       try:
                           page.screenshot(path=f'out/{name}_error.png', full_page=False)
                       except: pass
