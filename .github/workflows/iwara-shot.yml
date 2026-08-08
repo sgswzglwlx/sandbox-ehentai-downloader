@@ -24,7 +24,10 @@ jobs:
           cat > shot.py << 'PYEOF'
           import os, re
           from playwright.sync_api import sync_playwright
-          from playwright_stealth import stealth_sync
+          try:
+    from playwright_stealth import Stealth
+except ImportError:
+    Stealth = None
 
           urls = [u.strip() for u in os.environ['INPUT_URLS'].split('|') if u.strip()]
           print(f'待截图 {len(urls)} 个页面')
@@ -36,7 +39,8 @@ jobs:
                   user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
                   locale='en-US', timezone_id='America/New_York')
               page = ctx.new_page()
-              stealth_sync(page)
+              if Stealth:
+                Stealth().apply_stealth_sync(page)
               for i, url in enumerate(urls):
                   vid = re.search(r'/video/([a-zA-Z0-9]+)', url)
                   name = vid.group(1) if vid else f'video_{i}'
