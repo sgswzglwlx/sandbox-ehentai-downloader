@@ -15,71 +15,71 @@ jobs:
   shot:
     runs-on: ubuntu-latest
     steps:
-      - name: 安装依赖（含 stealth）
+      - name: 安装依赖
         run: pip install -q playwright playwright-stealth && (npx playwright install chromium --with-deps 2>/dev/null || python3 -m playwright install chromium --with-deps 2>/dev/null || true)
 
-      - name: Playwright stealth 截图（绕过 Cloudflare）
+      - name: 截图
         run: |
           mkdir -p out
           cat > shot.py << 'PYEOF'
-          import os, re
-          from playwright.sync_api import sync_playwright
-          try:
+import os, re
+from playwright.sync_api import sync_playwright
+try:
     from playwright_stealth import Stealth
+    STEALTH = True
 except ImportError:
-    Stealth = None
+    STEALTH = False
 
-          urls = [u.strip() for u in os.environ['INPUT_URLS'].split('|') if u.strip()]
-          print(f'待截图 {len(urls)} 个页面')
+urls = [u.strip() for u in os.environ['INPUT_URLS'].split('|') if u.strip()]
+print(f'待截图 {len(urls)} 个页面, stealth={STEALTH}')
 
-          with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True, args=[
-                  '--no-sandbox', '--disable-blink-features=AutomationControlled'])
-              ctx = browser.new_context(viewport={'width': 1280, 'height': 1000},
-                  user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-                  locale='en-US', timezone_id='America/New_York')
-              page = ctx.new_page()
-              if Stealth:
-                Stealth().apply_stealth_sync(page)
-              for i, url in enumerate(urls):
-                  vid = re.search(r'/video/([a-zA-Z0-9]+)', url)
-                  name = vid.group(1) if vid else f'video_{i}'
-                  try:
-                      page.goto(url, timeout=90000, wait_until='domcontentloaded')
-                      page.wait_for_timeout(8000)
-                      # 点击成人内容确认（多种方式）
-                      clicked = False
-                      for text in ['I am 18 or older', 'Confirm', 'Agree', 'Enter', 'Continue', 'Proceed', '进入', '确认', '同意']:
-                          try:
-                              btn = page.get_by_role('button', name=re.compile(text, re.I))
-                              if btn.count() > 0:
-                                  btn.first.click(timeout=5000)
-                                  print(f'  [{name}] 点击按钮: {text}')
-                                  clicked = True
-                                  page.wait_for_timeout(4000)
-                                  break
-                          except Exception: pass
-                      if not clicked:
-                          try:
-                              link = page.locator('a:has-text("I am 18 or older"), a:has-text("Enter"), a:has-text("Proceed"), a:has-text("Confirm")').first
-                              if link.count() > 0:
-                                  link.click(timeout=5000)
-                                  print(f'  [{name}] 点击链接')
-                                  page.wait_for_timeout(4000)
-                          except Exception: pass
-                      # 滚动加载
-                      for _ in range(3):
-                          page.mouse.wheel(0, 700)
-                          page.wait_for_timeout(1500)
-                      page.screenshot(path=f'out/{name}.png', full_page=False)
-                      print(f'✔ {name}: {page.title()[:80]}')
-                  except Exception as e:
-                      print(f'✘ {name}: {type(e).__name__}: {str(e)[:80]}')
-                      try:
-                          page.screenshot(path=f'out/{name}_error.png', full_page=False)
-                      except: pass
-              browser.close()
-          PYEOF
+with sync_playwright() as p:
+    browser = p.chromium.launch(headless=True, args=[
+        '--no-sandbox', '--disable-blink-features=AutomationControlled'])
+    ctx = browser.new_context(viewport={'width': 1280, 'height': 1000},
+        user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36')
+    page = ctx.new_page()
+    if STEALTH:
+        Stealth().apply_stealth_sync(page)
+    for i, url in enumerate(urls):
+        vid = re.search(r'/video/([a-zA-Z0-9]+)', url)
+        name = vid.group(1) if vid else f'video_{i}'
+        try:
+            page.goto(url, timeout=90000, wait_until='domcontentloaded')
+            page.wait_for_timeout(8000)
+            # 点击成人内容确认
+            for text in ['I am 18 or older', 'Confirm', 'Agree', 'Enter', 'Continue', 'Proceed', '进入', '确认', '同意']:
+                try:
+                    btn = page.get_by_role('button', name=re.compile(text, re.I))
+                    if btn.count() > 0:
+                        btn.first.click(timeout=5000)
+                        print(f'  [{name}] 点击按钮: {text}')
+                        page.wait_for_timeout(4000)
+                        break
+                except Exception:
+                    pass
+            try:
+                link = page.locator('a:has-text("I am 18 or older"), a:has-text("Enter"), a:has-text("Proceed")').first
+                if link.count() > 0:
+                    link.click(timeout=5000)
+                    print(f'  [{name}] 点击链接')
+                    page.wait_for_timeout(4000)
+            except Exception:
+                pass
+            # 滚动加载
+            for _ in range(3):
+                page.mouse.wheel(0, 700)
+                page.wait_for_timeout(1500)
+            page.screenshot(path=f'out/{name}.png', full_page=False)
+            print(f'OK {name}: {page.title()[:80]}')
+        except Exception as e:
+            print(f'FAIL {name}: {type(e).__name__}: {str(e)[:80]}')
+            try:
+                page.screenshot(path=f'out/{name}_error.png', full_page=False)
+            except Exception:
+                pass
+    browser.close()
+PYEOF
           python3 shot.py
           ls -la out/
 
