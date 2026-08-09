@@ -1,0 +1,57 @@
+name: iwara 标题批量解析
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: 'iwara 视频URL列表（用 | 分隔）'
+        required: true
+        type: string
+
+env:
+  INPUT_URLS: ${{ github.event.inputs.urls }}
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 安装依赖
+        run: pip install -q -U "yt-dlp[default,curl-cffi]"
+
+      - name: 解析标题（不下载）
+        run: |
+          mkdir -p out
+          cat > t.py << 'PYEOF'
+          import os, json, subprocess
+          urls = [u.strip() for u in os.environ['INPUT_URLS'].split('|') if u.strip()]
+          results = []
+          for url in urls:
+              vid = url.rstrip('/').split('/')[-1]
+              try:
+                  r = subprocess.run(['yt-dlp', '--impersonate', 'chrome', '-J', '--no-download', url],
+                      capture_output=True, text=True, timeout=60)
+                  if r.returncode == 0 and r.stdout.strip():
+                      d = json.loads(r.stdout)
+                      results.append({
+                          'id': vid,
+                          'title': d.get('title', '?'),
+                          'duration': d.get('duration'),
+                          'uploader': d.get('uploader', '?'),
+                          'url': url
+                      })
+                      print(f"OK {vid}: {d.get('title','?')} | {d.get('duration',0)//60}分{d.get('duration',0)%60}秒 | 上传者:{d.get('uploader','?')}")
+                  else:
+                      print(f"FAIL {vid}: {r.stderr[-150:]}")
+              except Exception as e:
+                  print(f"ERR {vid}: {e}")
+          with open('out/titles.json', 'w') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+          PYEOF
+          python3 t.py
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: iwara-titles
+          path: out/
+          retention-days: 7
