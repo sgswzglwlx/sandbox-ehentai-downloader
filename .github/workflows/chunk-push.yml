@@ -34,7 +34,7 @@ jobs:
           mkdir -p parts
           TS=$(date +%s)
           cd parts
-          split -b 18m ../work/bt.zip "${TS}-"
+          split -b 64m ../work/bt.zip "${TS}-"
           echo "分卷数: $(ls | wc -l)"
 
       - name: 推送分卷到 chunk-host (重置历史)
