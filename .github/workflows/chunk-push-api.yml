@@ -1,0 +1,69 @@
+name: 分卷推送v5 (API逐个上传)
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: 'artifact ID'
+        required: true
+        type: string
+
+env:
+  ART_ID: ${{ github.event.inputs.artifact_id }}
+
+jobs:
+  chunk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 下载 artifact 并拆卷
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          mkdir -p work parts
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            -o work/bt.zip \
+            "https://api.github.com/repos/sgswzglwlx/sandbox-ehentai-downloader/actions/artifacts/$ART_ID/zip"
+          cd parts
+          split -b 18m ../work/bt.zip "chunk-"
+          ls | wc -l
+
+      - name: API 逐个上传分卷
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          cd parts
+          for f in chunk-*; do
+            echo "上传 $f ($(stat -c%s $f) bytes)"
+            python3 - "$f" << 'PYEOF'
+import sys, base64, json, urllib.request
+name = sys.argv[1]
+GH_TOKEN = "$${{ secrets.MY_PAT }}"
+# 读取文件并 base64
+with open(name, 'rb') as fh:
+    content = base64.b64encode(fh.read()).decode()
+# 检查是否已存在
+try:
+    req = urllib.request.Request(
+        f'https://api.github.com/repos/sgswzglwlx/chunk-host/contents/chunks/{name}',
+        headers={'Authorization': f'token {GH_TOKEN}'})
+    resp = urllib.request.urlopen(req, timeout=30)
+    sha = json.loads(resp.read()).get('sha')
+except:
+    sha = None
+data = {'message': f'upload {name}', 'content': content}
+if sha:
+    data['sha'] = sha
+req2 = urllib.request.Request(
+    f'https://api.github.com/repos/sgswzglwlx/chunk-host/contents/chunks/{name}',
+    data=json.dumps(data).encode(),
+    headers={'Authorization': f'token {GH_TOKEN}', 'Content-Type': 'application/json'},
+    method='PUT')
+urllib.request.urlopen(req2, timeout=120)
+print(f'  OK {name}')
+PYEOF
+          done
+          echo "=== 全部上传完成 ==="
