@@ -1,0 +1,76 @@
+name: 分卷推送v4 (分批模式)
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: 'artifact ID'
+        required: true
+        type: string
+      batch_size:
+        description: '每批分卷数（默认40）'
+        required: false
+        type: string
+        default: '40'
+
+env:
+  ART_ID: ${{ github.event.inputs.artifact_id }}
+  BATCH: ${{ github.event.inputs.batch_size }}
+
+jobs:
+  chunk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 下载 artifact
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          mkdir -p work
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            -o work/bt.zip \
+            "https://api.github.com/repos/sgswzglwlx/sandbox-ehentai-downloader/actions/artifacts/$ART_ID/zip"
+          echo "size: $(stat -c%s work/bt.zip)"
+
+      - name: 拆分分卷 + 分批推送
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          mkdir -p parts
+          TS=$(date +%s)
+          cd parts
+          split -b 18m ../work/bt.zip "${TS}-"
+          cd ..
+          TOTAL=$(ls parts | wc -l)
+          echo "总卷数: $TOTAL"
+          
+          # 分批推送（每批 BATCH 个）
+          BATCH_SIZE=${BATCH:-40}
+          i=0
+          while [ $i -lt $TOTAL ]; do
+            BATCH_NUM=$((i / BATCH_SIZE + 1))
+            mkdir -p "batch_${BATCH_NUM}"
+            for f in $(ls parts | head -n $((i+BATCH_SIZE)) | tail -n $BATCH_SIZE); do
+              cp "parts/$f" "batch_${BATCH_NUM}/"
+            done
+            i=$((i+BATCH_SIZE))
+          done
+          echo "批次数: $(ls -d batch_* | wc -l)"
+          
+          # 推送每批到 chunk-host 的不同目录
+          git clone https://x-access-token:${GH_TOKEN}@github.com/sgswzglwlx/chunk-host.git /tmp/ch
+          cd /tmp/ch
+          git config user.name "chunk-bot"
+          git config user.email "chunk-bot@users.noreply.github.com"
+          mkdir -p chunks
+          for b in batch_*; do
+            echo "推送 $b ..."
+            cp $GITHUB_WORKSPACE/$b/* chunks/
+            git add -A
+            git -c user.name="chunk-bot" -c user.email="chunk-bot@users.noreply.github.com" commit -m "batch $b $(date +%s)" 2>/dev/null || echo "无变更"
+            git push origin main
+          done
+          echo "✅ 分批推送完成"
