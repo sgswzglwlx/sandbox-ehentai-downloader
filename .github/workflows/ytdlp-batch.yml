@@ -1,0 +1,85 @@
+name: yt-dlp 批量下载
+
+on:
+  workflow_dispatch:
+    inputs:
+      url_pairs:
+        description: '名称|URL 列表（每行一个，换行分隔）'
+        required: true
+        type: string
+      quality:
+        description: '清晰度 best/480/720 (默认480)'
+        required: false
+        type: string
+        default: '480'
+
+env:
+  INPUT_PAIRS: ${{ github.event.inputs.url_pairs }}
+  INPUT_QUALITY: ${{ github.event.inputs.quality }}
+
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 安装 yt-dlp
+        run: pip install -q -U "yt-dlp[default,curl-cffi]"
+
+      - name: 批量下载
+        run: |
+          mkdir -p out
+          cat > dl.py << 'PYEOF'
+          import os, subprocess, json
+
+          pairs_raw = os.environ['INPUT_PAIRS'].strip()
+          quality = os.environ.get('INPUT_QUALITY', '480')
+          pairs = []
+          for line in pairs_raw.split('\n'):
+              line = line.strip()
+              if not line: continue
+              if '|' in line:
+                  name, url = line.split('|', 1)
+              else:
+                  name = f"video_{len(pairs)}"
+                  url = line
+              pairs.append((name.strip(), url.strip()))
+
+          results = []
+          for name, url in pairs:
+              try:
+                  if quality == '480':
+                      cmd = ['yt-dlp', '--impersonate', 'chrome', '-S', 'res:480',
+                             '-o', f'out/{name}.%(ext)s', '--no-part', url]
+                  elif quality == '720':
+                      cmd = ['yt-dlp', '--impersonate', 'chrome', '-S', 'res:720',
+                             '-o', f'out/{name}.%(ext)s', '--no-part', url]
+                  else:
+                      cmd = ['yt-dlp', '--impersonate', 'chrome', '-f', 'best',
+                             '-o', f'out/{name}.%(ext)s', '--no-part', url]
+                  r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
+                  # 找输出文件
+                  import glob
+                  files = glob.glob(f'out/{name}.*')
+                  if files:
+                      sz = os.path.getsize(files[0])
+                      results.append({'name': name, 'status': 'OK', 'size': sz, 'file': files[0]})
+                      print(f'✅ {name}: {sz/1048576:.0f}MB')
+                  else:
+                      results.append({'name': name, 'status': 'FAIL', 'err': r.stderr[-200:]})
+                      print(f'❌ {name}: {r.stderr[-150:]}')
+              except Exception as e:
+                  results.append({'name': name, 'status': 'ERR', 'err': str(e)})
+                  print(f'❌ {name}: {e}')
+
+          with open('out/manifest.json', 'w') as f:
+              json.dump(results, f, ensure_ascii=False, indent=2)
+          PYEOF
+          python3 dl.py
+          ls -la out/
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: batch-downloads
+          path: out/
+          retention-days: 7
