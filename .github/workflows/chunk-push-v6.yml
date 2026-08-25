@@ -1,0 +1,73 @@
+name: 分卷推送v6 (多批次并行)
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: 'artifact ID'
+        required: true
+        type: string
+      batch_name:
+        description: '批次名（视频名，默认自动）'
+        required: false
+        type: string
+
+env:
+  ART_ID: ${{ github.event.inputs.artifact_id }}
+  BATCH: ${{ github.event.inputs.batch_name }}
+
+jobs:
+  chunk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: 检出
+        uses: actions/checkout@v4
+
+      - name: 下载 artifact
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          mkdir -p work
+          curl -sL -H "Authorization: token $GH_TOKEN" \
+            -o work/bt.zip \
+            "https://api.github.com/repos/sgswzglwlx/sandbox-ehentai-downloader/actions/artifacts/$ART_ID/zip"
+          echo "size: $(stat -c%s work/bt.zip)"
+
+      - name: 拆分分卷 + 推送到独立批次目录
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          # 批次名（视频名或时间戳）
+          TS=$(date +%s)
+          BATCH_NAME="${BATCH:-batch_${TS}}"
+          echo "批次目录: chunks/$BATCH_NAME"
+          
+          mkdir -p parts
+          cd parts
+          split -b 18m ../work/bt.zip "${TS}-"
+          TOTAL=$(ls | wc -l)
+          echo "分卷数: $TOTAL"
+          cd ..
+          
+          git clone https://x-access-token:${GH_TOKEN}@github.com/sgswzglwlx/chunk-host.git /tmp/ch
+          cd /tmp/ch
+          git config user.name "chunk-bot"
+          git config user.email "chunk-bot@users.noreply.github.com"
+          mkdir -p "chunks/$BATCH_NAME"
+          
+          # 分批 push（每批 30 个，避免超限）
+          cd $GITHUB_WORKSPACE/parts
+          i=0
+          for f in *; do
+            cp "$f" "/tmp/ch/chunks/$BATCH_NAME/"
+            i=$((i+1))
+            if [ $((i % 30)) -eq 0 ] || [ "$i" -eq "$TOTAL" ]; then
+              cd /tmp/ch
+              git add -A
+              git -c user.name="chunk-bot" -c user.email="chunk-bot@users.noreply.github.com" commit -m "batch $BATCH_NAME part $i $(date +%s)" 2>/dev/null || echo "无变更"
+              git push origin main
+              cd $GITHUB_WORKSPACE/parts
+            fi
+          done
+          echo "✅ 批次 $BATCH_NAME 推送完成 ($TOTAL 卷)"
