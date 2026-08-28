@@ -1,0 +1,29 @@
+name: 清空 chunk-host 分卷
+
+on:
+  workflow_dispatch:
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出 chunk-host
+        uses: actions/checkout@v4
+        with:
+          repository: sgswzglwlx/chunk-host
+          token: ${{ secrets.MY_PAT }}
+
+      - name: 清空 chunks 目录
+        run: |
+          git config user.name "chunk-bot"
+          git config user.email "chunk-bot@users.noreply.github.com"
+          if [ -d chunks ]; then
+            git rm -r chunks
+            git commit -m "cleanup: 移除临时分卷 $(date +%s)"
+            git push origin main
+            echo "✅ chunks 已清空并推送"
+          else
+            echo "chunks 目录不存在，无需清理"
+          fi
+          ls -la
