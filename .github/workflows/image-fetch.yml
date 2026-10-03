@@ -1,0 +1,54 @@
+name: 图片批量抓取
+
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: '图片URL列表（|分隔）'
+        required: true
+        type: string
+      referer:
+        description: 'Referer头（可选）'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载图片
+        env:
+          INPUT_URLS: ${{ github.event.inputs.urls }}
+          INPUT_REFERER: ${{ github.event.inputs.referer }}
+        run: |
+          mkdir -p out
+          cat > dl.py << 'PYEOF2'
+          import os, requests
+          urls = [u.strip() for u in os.environ['INPUT_URLS'].split('|') if u.strip()]
+          referer = os.environ.get('INPUT_REFERER', '').strip()
+          headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"}
+          if referer:
+              headers["Referer"] = referer
+          ok = 0
+          for i, u in enumerate(urls):
+              try:
+                  r = requests.get(u, headers=headers, timeout=30)
+                  if r.status_code == 200 and len(r.content) > 100:
+                      fn = f'out/img_{i:03d}.jpg'
+                      open(fn, 'wb').write(r.content)
+                      ok += 1
+                      print(f'{i}: {len(r.content)} bytes OK')
+                  else:
+                      print(f'{i}: status {r.status_code}, {len(r.content)} bytes SKIP')
+              except Exception as e:
+                  print(f'{i}: ERR {e}')
+          print(f'完成 {ok}/{len(urls)}')
+          PYEOF2
+          python3 dl.py
+
+      - name: 上传
+        uses: actions/upload-artifact@v4
+        with:
+          name: images
+          path: out/
