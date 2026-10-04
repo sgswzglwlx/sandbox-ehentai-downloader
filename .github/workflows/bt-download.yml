@@ -11,10 +11,15 @@ on:
         description: '磁力链接2 (magnet:?xt=urn:btih:...)'
         required: false
         type: string
+      select_files:
+        description: '选择性下载文件索引（如 1-2 或 1,3），留空=全部'
+        required: false
+        type: string
 
 env:
   INPUT_MAGNET1: ${{ github.event.inputs.magnet1 }}
   INPUT_MAGNET2: ${{ github.event.inputs.magnet2 }}
+  INPUT_SELECT: ${{ github.event.inputs.select_files }}
 
 jobs:
   download:
@@ -77,16 +82,19 @@ jobs:
         env:
           INPUT_MAGNET1: ${{ github.event.inputs.magnet1 }}
           INPUT_MAGNET2: ${{ github.event.inputs.magnet2 }}
+          INPUT_SELECT: ${{ github.event.inputs.select_files }}
         run: |
           set +e
           mkdir -p out
           TRACKERS="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,udp://tracker.openbittorrent.com:6969/announce,udp://exodus.desync.com:6969/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.moeking.me:6969/announce,udp://tracker.tiny-vps.com:6969/announce,udp://open.stealth.si:80/announce,udp://tracker.dler.org:6969/announce,udp://explodie.org:6969/announce,udp://tracker.tamersunion.org:6969/announce,http://tracker.opentrackr.org:1337/announce,https://tracker.gbitt.info:443/announce,http://tracker.gbitt.info:80/announce,http://sukebei.tracker.wf:8888/announce"
           i=1
+          SELECT_OPT=""
+          [ -n "$INPUT_SELECT" ] && SELECT_OPT="--select-file=$INPUT_SELECT" && echo "选择性下载: $INPUT_SELECT"
           for mag in "$INPUT_MAGNET1" "$INPUT_MAGNET2"; do
             [ -z "$mag" ] && continue
             mkdir -p out/task$i
             echo "=== 任务$i 开始: ${mag:0:60} ==="
-            timeout 870 aria2c --dir=out/task$i               --enable-dht=true --enable-peer-exchange=true --bt-enable-lpd=true               --dht-entry-point=router.bittorrent.com:6881               --dht-entry-point=dht.transmissionbt.com:6881               --dht-entry-point=router.bitcomet.com:6881               --bt-tracker="$TRACKERS"               --max-connection-per-server=16 --split=16 --bt-max-peers=100               --bt-request-peer-speed-limit=0 --seed-time=0 --bt-save-metadata=true               --file-allocation=none --allow-overwrite=true --auto-file-renaming=false               --console-log-level=error --summary-interval=0               "$mag"
+            timeout 3300 aria2c --dir=out/task$i               --enable-dht=true --enable-peer-exchange=true --bt-enable-lpd=true               --dht-entry-point=router.bittorrent.com:6881               --dht-entry-point=dht.transmissionbt.com:6881               --dht-entry-point=router.bitcomet.com:6881               --bt-tracker="$TRACKERS"               --max-connection-per-server=16 --split=16 --bt-max-peers=100               --bt-request-peer-speed-limit=0 --seed-time=0 --bt-save-metadata=true               --file-allocation=none --allow-overwrite=true --auto-file-renaming=false               --console-log-level=error --summary-interval=0 $SELECT_OPT               "$mag"
             echo "任务$i aria2退出码: $? (124=超时)"
             du -sh out/task$i 2>/dev/null
             i=$((i+1))
