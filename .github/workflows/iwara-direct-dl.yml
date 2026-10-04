@@ -1,0 +1,44 @@
+name: iwara 直链下载
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: '直接下载 URL'
+        required: true
+        type: string
+      name:
+        description: '输出文件名（不含扩展名）'
+        required: true
+        type: string
+      expect_size:
+        description: '预期大小（字节，可选校验）'
+        required: false
+        type: string
+        default: '0'
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载
+        run: |
+          mkdir -p out
+          echo "下载到 out/${{ inputs.name }}.mp4 ..."
+          time curl -sL --max-time 850 -o "out/${{ inputs.name }}.mp4" \
+            -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36" \
+            -H "Referer: https://www.iwara.tv/" \
+            "${{ inputs.url }}"
+          ls -la out/
+          ACT=$(stat -c%s "out/${{ inputs.name }}.mp4" 2>/dev/null || echo 0)
+          echo "实际大小: $ACT"
+          if [ "${{ inputs.expect_size }}" != "0" ] && [ "$ACT" != "${{ inputs.expect_size }}" ]; then
+            echo "⚠️ 大小不符! 预期 ${{ inputs.expect_size }}, 实际 $ACT"
+            exit 1
+          fi
+          file "out/${{ inputs.name }}.mp4" || true
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.name }}
+          path: out/
+          retention-days: 3
