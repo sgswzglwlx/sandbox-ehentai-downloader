@@ -1,0 +1,70 @@
+name: R34V 页面解析下载
+on:
+  workflow_dispatch:
+    inputs:
+      page_url:
+        description: '视频页面 URL'
+        required: true
+        type: string
+      name:
+        description: '输出文件名（不含扩展名）'
+        required: true
+        type: string
+      quality:
+        description: '画质优先级'
+        required: false
+        type: string
+        default: '1080p'
+
+env:
+  INPUT_URL: ${{ github.event.inputs.page_url }}
+  INPUT_NAME: ${{ github.event.inputs.name }}
+  INPUT_QUAL: ${{ github.event.inputs.quality }}
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 解析页面 + 下载
+        run: |
+          mkdir -p out
+          UA="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+          echo "抓取页面: $INPUT_URL"
+          curl -sL --max-time 90 -o /tmp/page.html "$INPUT_URL" -H "User-Agent: $UA"
+          echo "page size: $(stat -c%s /tmp/page.html)"
+          cat > /tmp/parse.py << 'PYEOF'
+          import re, html, subprocess, sys, os
+          body = open('/tmp/page.html', encoding='utf-8', errors='ignore').read()
+          body = html.unescape(body)
+          quality = os.environ.get('INPUT_QUAL', '1080p')
+          order = [quality] + [q for q in ['1080p','720p','480p','360'] if q != quality]
+          url = None
+          for q in order:
+              m = re.findall(r'https://rule34video\.com/get_file/[^\s"\'<>]+_' + re.escape(q) + r'[^\s"\'<>]*', body)
+              if m:
+                  url = m[0]
+                  break
+          if not url:
+              print('NO_URL_FOUND'); sys.exit(1)
+          print('下载 URL:', url[:150])
+          name = os.environ.get('INPUT_NAME', 'video')
+          r = subprocess.run(['curl','-sL','--max-time','840','-o', f'out/{name}.mp4',
+                              '-H','User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                              '-H','Referer: https://rule34video.com/',
+                              '-w','%{http_code}', url], capture_output=True, text=True)
+          print('curl exit:', r.returncode, '| http_code:', r.stdout.strip())
+          PYEOF
+          python3 /tmp/parse.py
+          echo "--- 结果 ---"
+          ls -la out/
+          file out/*.mp4 || true
+          ACT=$(stat -c%s "out/$INPUT_NAME.mp4" 2>/dev/null || echo 0)
+          echo "最终大小: $ACT"
+          if [ "$ACT" -lt 100000 ]; then echo "FAILED_TOO_SMALL"; exit 1; fi
+      - name: 上传 artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.name }}
+          path: out/
+          retention-days: 3
