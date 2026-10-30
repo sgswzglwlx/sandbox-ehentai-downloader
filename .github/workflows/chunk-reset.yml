@@ -1,0 +1,47 @@
+name: chunk-host 历史重置
+on:
+  workflow_dispatch:
+    inputs:
+      keep_files:
+        description: '保留现有 chunks 文件(1=保留, 0=清空)'
+        required: false
+        type: string
+        default: '0'
+
+env:
+  KEEP: ${{ github.event.inputs.keep_files }}
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: 重置 chunk-host git 历史
+        env:
+          GH_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          git clone --depth 1 https://x-access-token:${GH_TOKEN}@github.com/sgswzglwlx/chunk-host.git /tmp/ch
+          cd /tmp/ch
+          echo "=== 重置前大小 ==="
+          du -sh .
+          ls -la
+          if [ "$KEEP" = "0" ]; then
+            rm -rf chunks
+            mkdir -p chunks
+            echo "已清空 chunks"
+          fi
+          rm -rf .git
+          git init
+          git config user.name "chunk-bot"
+          git config user.email "chunk-bot@users.noreply.github.com"
+          cat > README.md << 'EOF'
+          # chunk-host
+          分卷文件仓库（历史已重置，仅保留当前批次）
+          EOF
+          git add -A
+          git commit -m "reset history $(date +%s)"
+          git branch -M main
+          git remote add origin https://x-access-token:${GH_TOKEN}@github.com/sgswzglwlx/chunk-host.git
+          git push -f origin main
+          echo "=== 重置完成 ==="
+          du -sh .
