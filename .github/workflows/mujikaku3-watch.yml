@@ -1,0 +1,103 @@
+name: 自动监控-幼驯染THE ANIMATION第3卷
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: 检查是否已抓到过
+        id: dup
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          N=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" --jq '[.artifacts[]|select(.name|startswith("MUJIKAKU3"))]|length' 2>/dev/null || echo 0)
+          echo "已有 artifact 数: $N"
+          if [ "$N" -gt 0 ]; then echo "skip=true" >> $GITHUB_OUTPUT; else echo "skip=false" >> $GITHUB_OUTPUT; fi
+
+      - name: 检出
+        if: steps.dup.outputs.skip == 'false'
+        uses: actions/checkout@v4
+
+      - name: 安装依赖
+        if: steps.dup.outputs.skip == 'false'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q aria2
+          pip install -q requests
+
+      - name: 搜索并下载
+        if: steps.dup.outputs.skip == 'false'
+        run: |
+          mkdir -p out
+          python3 - <<'PY'
+          import requests, re, subprocess, sys, os, json
+          H={"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"}
+          FEEDS=["https://sukebei.nyaa.si/?page=rss&q=Mujikaku+na+Osananajimi",
+                 "https://sukebei.nyaa.si/?page=rss&q=%E7%84%A1%E8%87%AA%E8%A6%9A%E3%81%AA%E5%B9%BC%E9%A6%B4%E6%9F%93",
+                 "https://sukebei.nyaa.si/?page=rss&q=%E3%83%A4%E3%81%A3%E3%81%A6%E3%81%BF%E3%81%9F%E3%82%89+THE+ANIMATION"]
+          hits={}
+          for u in FEEDS:
+              try:
+                  r=requests.get(u,headers=H,timeout=45)
+              except Exception as e:
+                  print("feed err",u,e); continue
+              for it in re.findall(r'<item>(.*?)</item>', r.text, flags=re.S):
+                  t=re.search(r'<title>(.*?)</title>',it,flags=re.S)
+                  l=re.search(r'<link>(.*?)</link>',it,flags=re.S)
+                  if not t or not l: continue
+                  title=re.sub(r'<[^>]+>','',t.group(1)).strip()
+                  link=l.group(1).strip()
+                  hit = ('128088053' in title) or ('幼馴染' in title and '第3巻' in title) \
+                        or ('Osananajimi' in title and re.search(r'(第3巻|Vol\.?\s*3|-\s*0?3\b)', title))
+                  if hit and '01-02' not in title:
+                      hits[link]=title
+          print("命中数:", len(hits))
+          for k,v in hits.items(): print("  *", v[:120]); print("   ", k)
+          if not hits:
+              open('out/status.txt','w').write('NOT_FOUND '+__import__('datetime').datetime.utcnow().isoformat())
+              sys.exit(0)
+          os.makedirs('out', exist_ok=True)
+          trackers="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,udp://tracker.torrent.eu.org:451/announce,udp://exodus.desync.com:6969/announce,udp://tracker.openbittorrent.com:6969/announce"
+          ok=False
+          for i,(link,title) in enumerate(hits.items()):
+              tf=f'/tmp/t{i}.torrent'
+              try:
+                  rr=requests.get(link,headers=H,timeout=60)
+                  open(tf,'wb').write(rr.content)
+                  print("torrent bytes:", len(rr.content))
+              except Exception as e:
+                  print("torrent err", e); continue
+              cmd=["aria2c",f"--dir=out/v{i}","--enable-dht=true","--dht-listen-port=6881-6999",
+                   "--dht-entry-point=router.bittorrent.com:6881",
+                   "--enable-peer-exchange=true","--bt-max-peers=0","--bt-request-peer-speed-limit=20M",
+                   "--file-allocation=none","--seed-time=0",f"--bt-tracker={trackers}",
+                   "--console-log-level=warn","--summary-interval=60","--max-connection-per-server=16", tf]
+              os.makedirs(f'out/v{i}', exist_ok=True)
+              print("开始下载:", title[:100])
+              p=subprocess.run(cmd, timeout=9000)
+              print("aria2 exit:", p.returncode)
+              for root,_,files in os.walk(f'out/v{i}'):
+                  for f in files:
+                      fp=os.path.join(root,f)
+                      print("  文件:", fp, os.path.getsize(fp))
+                      if os.path.getsize(fp) > 50*1024*1024: ok=True
+          open('out/RESULT.txt','w').write('DONE' if ok else 'EMPTY')
+          PY
+
+      - name: 上传 artifact
+        if: steps.dup.outputs.skip == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: MUJIKAKU3-${{ github.run_id }}
+          path: out
+          retention-days: 20
+          if-no-files-found: warn
