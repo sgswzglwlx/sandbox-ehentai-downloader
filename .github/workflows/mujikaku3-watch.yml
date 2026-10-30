@@ -2,7 +2,7 @@ name: 自动监控-幼驯染THE ANIMATION第3卷
 
 on:
   schedule:
-    - cron: '0 */3 * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -14,13 +14,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
-      - name: 检查是否已抓到过
+      - name: 检查是否已有有效产物
         id: dup
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          N=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" --jq '[.artifacts[]|select(.name|startswith("MUJIKAKU3"))]|length' 2>/dev/null || echo 0)
-          echo "已有 artifact 数: $N"
+          N=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" --jq '[.artifacts[]|select(.name|startswith("MUJIKAKU3"))|select(.size_in_bytes > 104857600)]|length' 2>/dev/null || echo 0)
+          echo "已有有效产物数: $N"
           if [ "$N" -gt 0 ]; then echo "skip=true" >> $GITHUB_OUTPUT; else echo "skip=false" >> $GITHUB_OUTPUT; fi
 
       - name: 检出
@@ -35,9 +35,9 @@ jobs:
           pip install -q requests
 
       - name: 搜索并下载
+        id: search
         if: steps.dup.outputs.skip == 'false'
         run: |
-          mkdir -p out
           python3 - <<'PY'
           import requests, re, subprocess, sys, os, json
           H={"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36"}
@@ -61,14 +61,17 @@ jobs:
                   if hit and '01-02' not in title:
                       hits[link]=title
           print("命中数:", len(hits))
-          for k,v in hits.items(): print("  *", v[:120]); print("   ", k)
+          for k,v in hits.items():
+              print("  *", v[:120]); print("   ", k)
           if not hits:
-              open('out/status.txt','w').write('NOT_FOUND '+__import__('datetime').datetime.utcnow().isoformat())
+              print("FOUND=0")
               sys.exit(0)
+          print("FOUND=1")
+          open('/tmp/found','w').write('1')
           os.makedirs('out', exist_ok=True)
           trackers="udp://tracker.opentrackr.org:1337/announce,udp://open.demonii.com:1337/announce,udp://tracker.torrent.eu.org:451/announce,udp://exodus.desync.com:6969/announce,udp://tracker.openbittorrent.com:6969/announce"
           ok=False
-          for i,(link,title) in enumerate(hits.items()):
+          for i,(link,title) in enumerate(list(hits.items())[:3]):
               tf=f'/tmp/t{i}.torrent'
               try:
                   rr=requests.get(link,headers=H,timeout=60)
@@ -76,12 +79,12 @@ jobs:
                   print("torrent bytes:", len(rr.content))
               except Exception as e:
                   print("torrent err", e); continue
+              os.makedirs(f'out/v{i}', exist_ok=True)
               cmd=["aria2c",f"--dir=out/v{i}","--enable-dht=true","--dht-listen-port=6881-6999",
                    "--dht-entry-point=router.bittorrent.com:6881",
                    "--enable-peer-exchange=true","--bt-max-peers=0","--bt-request-peer-speed-limit=20M",
                    "--file-allocation=none","--seed-time=0",f"--bt-tracker={trackers}",
                    "--console-log-level=warn","--summary-interval=60","--max-connection-per-server=16", tf]
-              os.makedirs(f'out/v{i}', exist_ok=True)
               print("开始下载:", title[:100])
               p=subprocess.run(cmd, timeout=9000)
               print("aria2 exit:", p.returncode)
@@ -91,13 +94,24 @@ jobs:
                       print("  文件:", fp, os.path.getsize(fp))
                       if os.path.getsize(fp) > 50*1024*1024: ok=True
           open('out/RESULT.txt','w').write('DONE' if ok else 'EMPTY')
+          print("RESULT:", 'DONE' if ok else 'EMPTY')
           PY
+          if [ -f /tmp/found ]; then echo "found=true" >> $GITHUB_OUTPUT; else echo "found=false" >> $GITHUB_OUTPUT; fi
 
-      - name: 上传 artifact
-        if: steps.dup.outputs.skip == 'false'
+      - name: 上传产物
+        if: steps.dup.outputs.skip == 'false' && steps.search.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: MUJIKAKU3-${{ github.run_id }}
           path: out
-          retention-days: 20
-          if-no-files-found: warn
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: 汇总
+        if: always()
+        run: |
+          {
+            echo "## 监控结果 $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- 去重跳过: ${{ steps.dup.outputs.skip }}"
+            echo "- 命中: ${{ steps.search.outputs.found }}"
+          } >> $GITHUB_STEP_SUMMARY
