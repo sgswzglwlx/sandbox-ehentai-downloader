@@ -1,0 +1,23 @@
+name: 仓库心跳（防定时任务60天自动禁用）
+
+on:
+  schedule:
+    - cron: '0 4 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  beat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 写入心跳
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" >> HEARTBEAT.md
+          git config user.name "relay-bot"
+          git config user.email "relay-bot@users.noreply.github.com"
+          git add HEARTBEAT.md
+          git diff --cached --quiet && echo "no change" || git commit -m "chore: heartbeat $(date -u +%Y-%m)"
+          git push || echo "push skipped"
