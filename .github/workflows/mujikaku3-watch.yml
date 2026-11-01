@@ -56,9 +56,16 @@ jobs:
                   if not t or not l: continue
                   title=re.sub(r'<[^>]+>','',t.group(1)).strip()
                   link=l.group(1).strip()
-                  hit = ('128088053' in title) or ('幼馴染' in title and '第3巻' in title) \
-                        or ('Osananajimi' in title and re.search(r'(第3巻|Vol\.?\s*3|-\s*0?3\b)', title))
-                  if hit and '01-02' not in title:
+                  hit = False
+                  if '128088053' in title:
+                      hit = True
+                  else:
+                      is_anime = bool(re.search(r'(?i)the\s*animation', title)) or bool(re.search(r'ヤってみたら\s*#', title))
+                      is_ours = ('ヤってみたら' in title) or ('Osananajimi' in title) or ('無自覚な幼馴染' in title)
+                      not_12 = not re.search(r'(第\s*[12]\s*巻|#\s*[12](?![0-9])|01-02|第[一二]巻)', title)
+                      if is_anime and is_ours and not_12:
+                          hit = True
+                  if hit:
                       hits[link]=title
           print("命中数:", len(hits))
           for k,v in hits.items():
